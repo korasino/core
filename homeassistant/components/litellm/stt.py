@@ -196,18 +196,17 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                     )
                 await connection.session.update(
                     session={
-                            "type": "transcription",
-                            "audio": {
-                                "input": {
-                                    "format": {
-                                        "type": "audio/pcm",
-                                        "rate": 16000,
-                                        "channels": 1,
-                                    },
-                                    "transcription": transcription,
-                                    "turn_detection": None,
-                                }
-                            },
+                        "type": "transcription",
+                        "audio": {
+                            "input": {
+                                "format": {
+                                    "type": "audio/pcm",
+                                    "rate": 16000,
+                                    "channels": 1,
+                                },
+                                "transcription": transcription,
+                                "turn_detection": None,
+                            }
                         },
                     }
                 )
