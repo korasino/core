@@ -177,6 +177,55 @@ async def test_duplicate_entry(
     assert result["reason"] == "already_configured"
 
 
+async def test_create_stt_subentry(
+    hass: HomeAssistant,
+    mock_openai_client: AsyncMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test creating an STT subentry from transcription model groups."""
+    await setup_integration(hass, mock_config_entry)
+
+    with patch(
+        "homeassistant.components.litellm.config_flow.async_get_model_groups",
+        new_callable=AsyncMock,
+        return_value=[
+            {
+                "model_group": "home-stt",
+                "mode": "audio_transcription",
+                "supported_endpoints": ["/v1/audio/transcriptions"],
+            },
+            {
+                "model_group": "home-chat",
+                "mode": "chat",
+                "supported_endpoints": ["/v1/chat/completions"],
+            },
+            {
+                "model_group": "unknown-stt",
+                "mode": "audio_transcription",
+                "supported_endpoints": None,
+            },
+        ],
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (mock_config_entry.entry_id, "stt"),
+            context={"source": SOURCE_USER},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+    assert result["data_schema"].schema["model"].config["options"] == [
+        {"value": "home-stt", "label": "home-stt"}
+    ]
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {CONF_MODEL: "home-stt"}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "home-stt"
+    assert result["data"] == {CONF_MODEL: "home-stt"}
+
+
 @pytest.mark.usefixtures("mock_models")
 async def test_create_conversation_agent(
     hass: HomeAssistant,
