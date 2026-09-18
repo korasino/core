@@ -29,6 +29,7 @@ class ModelGroupInfo(TypedDict):
     model_group: str
     mode: str | None
     supported_endpoints: list[str] | None
+    supported_openai_params: list[str] | None
 
 
 async def async_get_model_groups(
