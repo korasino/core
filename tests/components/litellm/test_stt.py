@@ -115,7 +115,10 @@ async def test_batch_stt(
 ) -> None:
     """Test batch transcription."""
     entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
+        hass,
+        mock_openai_client,
+        ["/v1/audio/transcriptions"],
+        ["keywords"],
     )
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         return_value=MagicMock(text="Turn on the light")
@@ -244,6 +247,7 @@ async def test_realtime_stt(
             "/v1/audio/transcriptions",
             "/v1/realtime/transcription_sessions",
         ],
+        ["keywords"],
     )
     connection = _RealtimeConnection(
         [
