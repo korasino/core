@@ -293,6 +293,33 @@ async def test_realtime_stt(
     assert connection.commits == 1
 
 
+async def test_realtime_stt_omits_unsupported_keywords(
+    hass: HomeAssistant, mock_openai_client: AsyncMock
+) -> None:
+    """Test realtime transcription omits unsupported optional parameters."""
+    entity = await _setup_stt(
+        hass, mock_openai_client, ["/v1/realtime/transcription_sessions"]
+    )
+    connection = _RealtimeConnection(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                transcript="Turn on the light",
+            )
+        ]
+    )
+    mock_openai_client.realtime.connect = MagicMock(
+        return_value=_RealtimeContext(connection)
+    )
+
+    await entity.async_process_audio_stream(
+        _metadata(), _audio_stream(b"audio")
+    )
+
+    transcription = connection.session_updates[0]["audio"]["input"]["transcription"]
+    assert "keywords" not in transcription
+
+
 async def test_realtime_stt_error_event(
     hass: HomeAssistant, mock_openai_client: AsyncMock
 ) -> None:
