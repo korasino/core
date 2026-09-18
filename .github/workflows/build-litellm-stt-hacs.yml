@@ -1,0 +1,28 @@
+name: Build HACS LiteLLM STT
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - hacs/litellm-stt-2026.9.3
+    paths:
+      - custom_components/litellm/**
+      - .github/workflows/build-litellm-stt-hacs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build HACS archive
+        run: |
+          mkdir -p dist
+          cd custom_components/litellm
+          zip -r ../../dist/litellm.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: litellm-hacs
+          path: dist/litellm.zip
