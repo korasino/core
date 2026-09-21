@@ -11,8 +11,9 @@ from openai import (
     AuthenticationError,
     OpenAIError,
     PermissionDeniedError,
+    WebSocketConnectionClosedError,
 )
-from websockets.exceptions import InvalidStatus, WebSocketException
+from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
@@ -324,17 +325,17 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                 file=("audio.wav", wav_buffer.getvalue()),
                 **self._transcription_options(metadata),
             )
-        except (AuthenticationError, PermissionDeniedError):
+        except (AuthenticationError, PermissionDeniedError) as err:
             await coordinator.async_request_refresh()
-            LOGGER.exception("Authentication error during STT")
-        except APIConnectionError:
+            LOGGER.error("Authentication error during STT: %s", err)
+        except APIConnectionError as err:
             coordinator.mark_connection_error()
-            LOGGER.exception("Connection error during STT")
-        except OpenAIError:
+            LOGGER.error("Connection error during STT: %s", err)
+        except OpenAIError as err:
             coordinator.async_set_updated_data(None)
-            LOGGER.exception("Error during STT")
-        except TemplateError:
-            LOGGER.exception("Error rendering STT template")
+            LOGGER.error("Error during STT: %s", err)
+        except TemplateError as err:
+            LOGGER.error("Error rendering STT template: %s", err)
         else:
             coordinator.async_set_updated_data(None)
             if response.text:
@@ -355,6 +356,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                 extra_query={"intent": "transcription"},
                 max_retries=0,
             ) as connection:
+                coordinator.async_set_updated_data(None)
                 transcription: dict[str, str | list[str]] = {
                     "model": self.model,
                     **self._transcription_options(metadata),
@@ -399,7 +401,6 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                                 "LiteLLM realtime STT received final transcript (%d chars)",
                                 len(event.transcript),
                             )
-                            coordinator.async_set_updated_data(None)
                             return stt.SpeechResult(
                                 event.transcript, stt.SpeechResultState.SUCCESS
                             )
@@ -408,39 +409,43 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                         event.type
                         == "conversation.item.input_audio_transcription.failed"
                     ):
-                        coordinator.async_set_updated_data(None)
                         LOGGER.error(
                             "Realtime STT transcription failed: %s",
                             event.error.message,
                         )
                         break
                     if event.type == "error":
-                        coordinator.async_set_updated_data(None)
                         LOGGER.error("Realtime STT error: %s", event)
                         break
-        except (AuthenticationError, PermissionDeniedError):
+        except (AuthenticationError, PermissionDeniedError) as err:
             await coordinator.async_request_refresh()
-            LOGGER.exception("Authentication error during realtime STT")
-        except APIConnectionError:
+            LOGGER.error("Authentication error during realtime STT: %s", err)
+        except APIConnectionError as err:
             coordinator.mark_connection_error()
-            LOGGER.exception("Connection error during realtime STT")
+            LOGGER.error("Connection error during realtime STT: %s", err)
         except InvalidStatus as err:
             if err.response.status_code in (401, 403):
                 await coordinator.async_request_refresh()
-                LOGGER.exception("Authentication error during realtime STT")
+                LOGGER.error("Authentication error during realtime STT: %s", err)
             else:
                 coordinator.async_set_updated_data(None)
-                LOGGER.exception("Realtime STT websocket handshake failed")
-        except OSError:
+                LOGGER.error("Realtime STT websocket handshake failed: %s", err)
+        except OSError as err:
             coordinator.mark_connection_error()
-            LOGGER.exception("Connection error during realtime STT")
-        except OpenAIError:
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except WebSocketConnectionClosedError as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except OpenAIError as err:
             coordinator.async_set_updated_data(None)
-            LOGGER.exception("Error during realtime STT")
-        except WebSocketException:
+            LOGGER.error("Error during realtime STT: %s", err)
+        except ConnectionClosed as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except WebSocketException as err:
             coordinator.async_set_updated_data(None)
-            LOGGER.exception("WebSocket error during realtime STT")
-        except TemplateError:
-            LOGGER.exception("Error rendering STT template")
+            LOGGER.error("WebSocket error during realtime STT: %s", err)
+        except TemplateError as err:
+            LOGGER.error("Error rendering STT template: %s", err)
 
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
