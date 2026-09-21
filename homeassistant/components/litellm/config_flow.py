@@ -259,45 +259,48 @@ class STTFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             self.options.update(user_input)
-            data = {CONF_MODEL: model}
-            if "prompt" in supported_params and CONF_PROMPT in self.options:
-                data[CONF_PROMPT] = self.options[CONF_PROMPT]
-            if "keywords" in supported_params and CONF_VOCABULARY in self.options:
-                data[CONF_VOCABULARY] = self.options[CONF_VOCABULARY]
+        else:
+            step_schema: dict[Any, Any] = {}
+            if "prompt" in supported_params:
+                step_schema[
+                    vol.Optional(
+                        CONF_PROMPT,
+                        description={
+                            "suggested_value": self.options.get(CONF_PROMPT, "")
+                        },
+                    )
+                ] = TemplateSelector()
+            if "keywords" in supported_params:
+                step_schema[
+                    vol.Optional(
+                        CONF_VOCABULARY,
+                        description={
+                            "suggested_value": self.options.get(CONF_VOCABULARY, "")
+                        },
+                    )
+                ] = TemplateSelector()
 
-            if self._is_new:
-                return self.async_create_entry(title=model, data=data)
-            return self.async_update_and_abort(
-                entry,
-                self._get_reconfigure_subentry(),
-                title=model,
-                data=data,
-            )
-
-        step_schema: dict[Any, Any] = {}
-        if "prompt" in supported_params:
-            step_schema[
-                vol.Optional(
-                    CONF_PROMPT,
-                    description={
-                        "suggested_value": self.options.get(CONF_PROMPT, "")
-                    },
+            if step_schema:
+                return self.async_show_form(
+                    step_id="model",
+                    data_schema=vol.Schema(step_schema),
+                    last_step=True,
                 )
-            ] = TemplateSelector()
-        if "keywords" in supported_params:
-            step_schema[
-                vol.Optional(
-                    CONF_VOCABULARY,
-                    description={
-                        "suggested_value": self.options.get(CONF_VOCABULARY, "")
-                    },
-                )
-            ] = TemplateSelector()
 
-        return self.async_show_form(
-            step_id="model",
-            data_schema=vol.Schema(step_schema),
+        data = {
+            key: self.options[key]
+            for key in (CONF_MODEL, CONF_PROMPT, CONF_VOCABULARY)
+            if key in self.options
+        }
+        if self._is_new:
+            return self.async_create_entry(title=model, data=data)
+        return self.async_update_and_abort(
+            entry,
+            self._get_reconfigure_subentry(),
+            title=model,
+            data=data,
         )
+
 
 
 class ConversationFlowHandler(LiteLLMSubentryFlowHandler):
