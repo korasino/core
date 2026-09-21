@@ -386,6 +386,15 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                                 event.transcript, stt.SpeechResultState.SUCCESS
                             )
                         break
+                    if (
+                        event.type
+                        == "conversation.item.input_audio_transcription.failed"
+                    ):
+                        LOGGER.error(
+                            "Realtime STT transcription failed: %s",
+                            event.error.message,
+                        )
+                        break
                     if event.type == "error":
                         LOGGER.error("Realtime STT error: %s", event)
                         break
