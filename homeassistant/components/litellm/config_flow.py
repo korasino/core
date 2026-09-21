@@ -27,18 +27,20 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
+    TemplateSelectorConfig,
 )
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_PROMPT,
+    CONF_VOCABULARY,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
     STT_BATCH_ENDPOINT,
     STT_REALTIME_ENDPOINT,
 )
-from .coordinator import async_get_model_groups
+from .coordinator import ModelGroupInfo, async_get_model_groups
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,21 +155,44 @@ class LiteLLMSubentryFlowHandler(ConfigSubentryFlow):
         )
 
 
-
 class STTFlowHandler(ConfigSubentryFlow):
     """Handle STT subentry flow."""
+
+    def __init__(self) -> None:
+        """Initialize the STT subentry flow."""
+        self.options: dict[str, Any] = {}
+        self.model_groups: list[ModelGroupInfo] | None = None
+        self._rendered_model: str | None = None
+
+    @property
+    def _is_new(self) -> bool:
+        """Return if this is a new subentry."""
+        return self.source == SOURCE_USER
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Create an STT entity."""
+        self.options = {}
+        self._rendered_model = None
         return await self.async_step_init(user_input)
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Reconfigure an STT entity."""
+        self.options = self._get_reconfigure_subentry().data.copy()
+        self._rendered_model = self.options.get(CONF_MODEL)
         return await self.async_step_init(user_input)
+
+    def _supported_params(self, model_name: str | None) -> set[str]:
+        """Return transcription parameters advertised for a model group."""
+        if model_name is None or self.model_groups is None:
+            return set()
+        for model in self.model_groups:
+            if model["model_group"] == model_name:
+                return set(model.get("supported_openai_params") or [])
+        return set()
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -177,52 +202,57 @@ class STTFlowHandler(ConfigSubentryFlow):
         if entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
 
-        if user_input is not None:
-            if self.source == SOURCE_USER:
-                return self.async_create_entry(
-                    title=user_input[CONF_MODEL], data=user_input
+        if self.model_groups is None:
+            try:
+                self.model_groups = await async_get_model_groups(
+                    self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
                 )
-            return self.async_update_and_abort(
-                entry,
-                self._get_reconfigure_subentry(),
-                title=user_input[CONF_MODEL],
-                data=user_input,
-            )
+            except ConfigEntryAuthFailed:
+                return self.async_abort(reason="invalid_auth")
+            except UpdateFailed:
+                return self.async_abort(reason="cannot_connect")
+            except Exception:
+                _LOGGER.exception("Unexpected exception")
+                return self.async_abort(reason="unknown")
 
-        try:
-            model_groups = await async_get_model_groups(
-                self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
-            )
-        except ConfigEntryAuthFailed:
-            return self.async_abort(reason="invalid_auth")
-        except UpdateFailed:
-            return self.async_abort(reason="cannot_connect")
-        except Exception:
-            _LOGGER.exception("Unexpected exception")
-            return self.async_abort(reason="unknown")
-
-        models = []
-        for model in model_groups:
-            endpoints = model.get("supported_endpoints")
+        models = [
+            model["model_group"]
+            for model in self.model_groups
             if (
                 model.get("mode") == "audio_transcription"
-                and endpoints
+                and (endpoints := model.get("supported_endpoints"))
                 and (
                     STT_BATCH_ENDPOINT in endpoints
                     or STT_REALTIME_ENDPOINT in endpoints
                 )
-            ):
-                models.append(model["model_group"])
-        default_model = (
-            None
-            if self.source == SOURCE_USER
-            else self._get_reconfigure_subentry().data[CONF_MODEL]
-        )
+            )
+        ]
+
+        if user_input is not None:
+            selected_model = user_input[CONF_MODEL]
+            self.options.update(user_input)
+            if selected_model == self._rendered_model:
+                data = self.options.copy()
+                if self._is_new:
+                    return self.async_create_entry(title=selected_model, data=data)
+                return self.async_update_and_abort(
+                    entry,
+                    self._get_reconfigure_subentry(),
+                    title=selected_model,
+                    data=data,
+                )
+            self._rendered_model = selected_model
+
+        selected_model = self.options.get(CONF_MODEL)
+        supported_params = self._supported_params(selected_model)
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_MODEL, default=default_model): SelectSelector(
+                    vol.Required(
+                        CONF_MODEL, default=selected_model
+                    ): SelectSelector(
                         SelectSelectorConfig(
                             options=[
                                 SelectOptionDict(value=model, label=model)
@@ -231,7 +261,27 @@ class STTFlowHandler(ConfigSubentryFlow):
                             mode=SelectSelectorMode.DROPDOWN,
                             sort=True,
                         )
-                    )
+                    ),
+                    vol.Optional(
+                        CONF_PROMPT,
+                        description={
+                            "suggested_value": self.options.get(CONF_PROMPT, "")
+                        },
+                    ): TemplateSelector(
+                        TemplateSelectorConfig(
+                            read_only="prompt" not in supported_params
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_VOCABULARY,
+                        description={
+                            "suggested_value": self.options.get(CONF_VOCABULARY, "")
+                        },
+                    ): TemplateSelector(
+                        TemplateSelectorConfig(
+                            read_only="keywords" not in supported_params
+                        )
+                    ),
                 }
             ),
         )

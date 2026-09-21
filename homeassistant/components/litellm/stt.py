@@ -10,34 +10,35 @@ from openai import OpenAIError
 from websockets.exceptions import WebSocketException
 
 from homeassistant.components import stt
-from homeassistant.components.conversation.const import DOMAIN as CONVERSATION_DOMAIN
-from homeassistant.components.homeassistant.llm import async_get_exposed_entities
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_URL
+from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_PROMPT, CONF_URL
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.template import Template
 
-from .const import LOGGER, STT_BATCH_ENDPOINT, STT_REALTIME_ENDPOINT
+from .const import CONF_VOCABULARY, LOGGER, STT_BATCH_ENDPOINT, STT_REALTIME_ENDPOINT
 from .coordinator import LiteLLMConfigEntry, async_get_model_groups
 from .entity import LiteLLMEntity
 
 
-def _get_vocabulary(hass: HomeAssistant) -> list[str]:
-    """Return names and areas exposed to Assist as STT keywords."""
-    exposed_entities = async_get_exposed_entities(
-        hass, CONVERSATION_DOMAIN, include_state=False
-    )
-    vocabulary: dict[str, None] = {}
-    for info in exposed_entities.values():
-        for key in ("names", "areas"):
-            value = info.get(key)
-            if isinstance(value, str):
-                for term in value.split(", "):
-                    if term:
-                        vocabulary.setdefault(term, None)
-    terms = list(vocabulary)
-    LOGGER.debug("LiteLLM STT vocabulary (%d terms): %s", len(terms), terms)
-    return terms
+def _render_template(hass: HomeAssistant, value: str) -> str:
+    """Render an STT option template."""
+    return Template(value, hass).async_render(parse_result=False)
+
+
+def _parse_vocabulary(value: str) -> list[str]:
+    """Parse one vocabulary term per line, preserving order."""
+    vocabulary: list[str] = []
+    seen: set[str] = set()
+    for line in value.splitlines():
+        term = line.strip()
+        normalized = term.casefold()
+        if not term or normalized in seen:
+            continue
+        seen.add(normalized)
+        vocabulary.append(term)
+    return vocabulary
 
 
 async def async_setup_entry(
@@ -93,6 +94,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         super().__init__(entry, subentry)
         self._supported_endpoints = supported_endpoints
         self._supports_language = "language" in supported_openai_params
+        self._supports_prompt = "prompt" in supported_openai_params
         self._supports_keywords = "keywords" in supported_openai_params
 
     @property
@@ -153,8 +155,18 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             # LiteLLM follows the OpenAI transcription contract, which uses
             # ISO-639-1 language codes rather than regional locale tags.
             options["language"] = metadata.language.split("-")[0]
-        if self._supports_keywords:
-            options["keywords"] = _get_vocabulary(self.entry.runtime_data.hass)
+        hass = self.entry.runtime_data.hass
+        if self._supports_prompt and (prompt_template := self.subentry.data.get(CONF_PROMPT)):
+            if prompt := _render_template(hass, prompt_template):
+                options["prompt"] = prompt
+        if self._supports_keywords and (
+            vocabulary_template := self.subentry.data.get(CONF_VOCABULARY)
+        ):
+            vocabulary = _parse_vocabulary(
+                _render_template(hass, vocabulary_template)
+            )
+            if vocabulary:
+                options["keywords"] = vocabulary
         return options
 
     async def _async_process_batch(
@@ -178,7 +190,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                 file=("audio.wav", wav_buffer.getvalue()),
                 **self._transcription_options(metadata),
             )
-        except OpenAIError:
+        except (OpenAIError, TemplateError):
             LOGGER.exception("Error during STT")
         else:
             if response.text:
@@ -249,7 +261,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
                     if event.type == "error":
                         LOGGER.error("Realtime STT error: %s", event)
                         break
-        except (OpenAIError, WebSocketException, OSError):
+        except (OpenAIError, TemplateError, WebSocketException, OSError):
             LOGGER.exception("Error during realtime STT")
 
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
