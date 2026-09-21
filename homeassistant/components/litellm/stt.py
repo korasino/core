@@ -88,6 +88,9 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
     @override
     def supported_languages(self) -> list[str]:
         """Return supported languages."""
+        # LiteLLM does not expose per-model STT language capabilities.
+        # Advertise a broad set of commonly supported languages; unsupported
+        # languages may be rejected by the provider at runtime.
         return [
             "af-ZA",
             "am-ET",
