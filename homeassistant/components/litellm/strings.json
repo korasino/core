@@ -66,16 +66,23 @@
       "step": {
         "init": {
           "data": {
-            "model": "[%key:common::generic::model%]",
+            "model": "[%key:common::generic::model%]"
+          },
+          "data_description": {
+            "model": "The model to use to transcribe speech"
+          },
+          "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline."
+        },
+        "model": {
+          "data": {
             "prompt": "[%key:common::config_flow::data::prompt%]",
             "vocabulary": "Vocabulary"
           },
           "data_description": {
-            "model": "The model to use to transcribe speech",
-            "prompt": "Additional context or instructions sent with each transcription to help the model interpret the audio. You can use a Home Assistant template. This field is read-only when the selected model does not support prompts.",
-            "vocabulary": "Words or phrases the model should recognize accurately, one per line. Use this for names and other terms that are easy to mishear. You can use a Home Assistant template. This field is read-only when the selected model does not support vocabulary."
+            "prompt": "Additional context or instructions sent with each transcription to help the model interpret the audio. You can use a Home Assistant template.",
+            "vocabulary": "Vocabulary sent with each transcription to help the model recognize names and other terms accurately. You can use a Home Assistant template."
           },
-          "description": "Configure speech-to-text. The transcription language is selected in the Assist pipeline."
+          "description": "Configure the options supported by the selected speech-to-text model."
         }
       }
     }

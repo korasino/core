@@ -27,7 +27,6 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
-    TemplateSelectorConfig,
 )
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -162,7 +161,6 @@ class STTFlowHandler(ConfigSubentryFlow):
         """Initialize the STT subentry flow."""
         self.options: dict[str, Any] = {}
         self.model_groups: list[ModelGroupInfo] | None = None
-        self._rendered_model: str | None = None
 
     @property
     def _is_new(self) -> bool:
@@ -174,7 +172,7 @@ class STTFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Create an STT entity."""
         self.options = {}
-        self._rendered_model = None
+        self.model_groups = None
         return await self.async_step_init(user_input)
 
     async def async_step_reconfigure(
@@ -182,13 +180,12 @@ class STTFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Reconfigure an STT entity."""
         self.options = self._get_reconfigure_subentry().data.copy()
-        self._rendered_model = self.options.get(CONF_MODEL)
+        self.model_groups = None
         return await self.async_step_init(user_input)
 
-    def _supported_params(self, model_name: str | None) -> set[str]:
+    def _supported_params(self, model_name: str) -> set[str]:
         """Return transcription parameters advertised for a model group."""
-        if model_name is None or self.model_groups is None:
-            return set()
+        assert self.model_groups is not None
         for model in self.model_groups:
             if model["model_group"] == model_name:
                 return set(model.get("supported_openai_params") or [])
@@ -197,7 +194,7 @@ class STTFlowHandler(ConfigSubentryFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Manage STT configuration."""
+        """Select an STT model."""
         entry = self._get_entry()
         if entry.state is not ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
@@ -229,29 +226,15 @@ class STTFlowHandler(ConfigSubentryFlow):
         ]
 
         if user_input is not None:
-            selected_model = user_input[CONF_MODEL]
-            self.options.update(user_input)
-            if selected_model == self._rendered_model:
-                data = self.options.copy()
-                if self._is_new:
-                    return self.async_create_entry(title=selected_model, data=data)
-                return self.async_update_and_abort(
-                    entry,
-                    self._get_reconfigure_subentry(),
-                    title=selected_model,
-                    data=data,
-                )
-            self._rendered_model = selected_model
-
-        selected_model = self.options.get(CONF_MODEL)
-        supported_params = self._supported_params(selected_model)
+            self.options[CONF_MODEL] = user_input[CONF_MODEL]
+            return await self.async_step_model()
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_MODEL, default=selected_model
+                        CONF_MODEL, default=self.options.get(CONF_MODEL)
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=[
@@ -261,29 +244,59 @@ class STTFlowHandler(ConfigSubentryFlow):
                             mode=SelectSelectorMode.DROPDOWN,
                             sort=True,
                         )
-                    ),
-                    vol.Optional(
-                        CONF_PROMPT,
-                        description={
-                            "suggested_value": self.options.get(CONF_PROMPT, "")
-                        },
-                    ): TemplateSelector(
-                        TemplateSelectorConfig(
-                            read_only="prompt" not in supported_params
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_VOCABULARY,
-                        description={
-                            "suggested_value": self.options.get(CONF_VOCABULARY, "")
-                        },
-                    ): TemplateSelector(
-                        TemplateSelectorConfig(
-                            read_only="keywords" not in supported_params
-                        )
-                    ),
+                    )
                 }
             ),
+        )
+
+    async def async_step_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Manage options supported by the selected STT model."""
+        entry = self._get_entry()
+        model = self.options[CONF_MODEL]
+        supported_params = self._supported_params(model)
+
+        if user_input is not None:
+            self.options.update(user_input)
+            data = {CONF_MODEL: model}
+            if "prompt" in supported_params and CONF_PROMPT in self.options:
+                data[CONF_PROMPT] = self.options[CONF_PROMPT]
+            if "keywords" in supported_params and CONF_VOCABULARY in self.options:
+                data[CONF_VOCABULARY] = self.options[CONF_VOCABULARY]
+
+            if self._is_new:
+                return self.async_create_entry(title=model, data=data)
+            return self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                title=model,
+                data=data,
+            )
+
+        step_schema: dict[Any, Any] = {}
+        if "prompt" in supported_params:
+            step_schema[
+                vol.Optional(
+                    CONF_PROMPT,
+                    description={
+                        "suggested_value": self.options.get(CONF_PROMPT, "")
+                    },
+                )
+            ] = TemplateSelector()
+        if "keywords" in supported_params:
+            step_schema[
+                vol.Optional(
+                    CONF_VOCABULARY,
+                    description={
+                        "suggested_value": self.options.get(CONF_VOCABULARY, "")
+                    },
+                )
+            ] = TemplateSelector()
+
+        return self.async_show_form(
+            step_id="model",
+            data_schema=vol.Schema(step_schema),
         )
 
 

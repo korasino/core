@@ -27,19 +27,6 @@ def _render_template(hass: HomeAssistant, value: str) -> str:
     return Template(value, hass).async_render(parse_result=False)
 
 
-def _parse_vocabulary(value: str) -> list[str]:
-    """Parse one vocabulary term per line, preserving order."""
-    vocabulary: list[str] = []
-    seen: set[str] = set()
-    for line in value.splitlines():
-        term = line.strip()
-        normalized = term.casefold()
-        if not term or normalized in seen:
-            continue
-        seen.add(normalized)
-        vocabulary.append(term)
-    return vocabulary
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -162,11 +149,8 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         if self._supports_keywords and (
             vocabulary_template := self.subentry.data.get(CONF_VOCABULARY)
         ):
-            vocabulary = _parse_vocabulary(
-                _render_template(hass, vocabulary_template)
-            )
-            if vocabulary:
-                options["keywords"] = vocabulary
+            if vocabulary := _render_template(hass, vocabulary_template):
+                options["keywords"] = [vocabulary]
         return options
 
     async def _async_process_batch(
