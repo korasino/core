@@ -1,7 +1,7 @@
 """Config flow for LiteLLM integration."""
 
 import logging
-from typing import Any, override
+from typing import Any, cast, override
 
 from openai import AsyncOpenAI, AuthenticationError, OpenAIError, PermissionDeniedError
 import voluptuous as vol
@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_MODEL, CONF_URL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
@@ -28,13 +28,17 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
     TemplateSelector,
 )
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_PROMPT,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
+    STT_BATCH_ENDPOINT,
+    STT_REALTIME_ENDPOINT,
 )
+from .coordinator import async_get_model_groups
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +69,8 @@ async def _get_models(hass: HomeAssistant, url: str, api_key: str | None) -> lis
     client = AsyncOpenAI(
         base_url=url,
         api_key=api_key or PLACEHOLDER_API_KEY,
-        http_client=get_async_client(hass),
+        # Legacy HTTPX clients are supported at runtime only.
+        http_client=cast(Any, get_async_client(hass)),
     )
     try:
         return [
@@ -89,7 +94,10 @@ class LiteLLMConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return subentries supported by this handler."""
-        return {"conversation": ConversationFlowHandler}
+        return {
+            "conversation": ConversationFlowHandler,
+            "stt": STTFlowHandler,
+        }
 
     @override
     async def async_step_user(
@@ -142,6 +150,90 @@ class LiteLLMSubentryFlowHandler(ConfigSubentryFlow):
         entry = self._get_entry()
         self.models = await _get_models(
             self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
+        )
+
+
+
+class STTFlowHandler(ConfigSubentryFlow):
+    """Handle STT subentry flow."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Create an STT entity."""
+        return await self.async_step_init(user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Reconfigure an STT entity."""
+        return await self.async_step_init(user_input)
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Manage STT configuration."""
+        entry = self._get_entry()
+        if entry.state is not ConfigEntryState.LOADED:
+            return self.async_abort(reason="entry_not_loaded")
+
+        if user_input is not None:
+            if self.source == SOURCE_USER:
+                return self.async_create_entry(
+                    title=user_input[CONF_MODEL], data=user_input
+                )
+            return self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                title=user_input[CONF_MODEL],
+                data=user_input,
+            )
+
+        try:
+            model_groups = await async_get_model_groups(
+                self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
+            )
+        except ConfigEntryAuthFailed:
+            return self.async_abort(reason="invalid_auth")
+        except UpdateFailed:
+            return self.async_abort(reason="cannot_connect")
+        except Exception:
+            _LOGGER.exception("Unexpected exception")
+            return self.async_abort(reason="unknown")
+
+        models = []
+        for model in model_groups:
+            endpoints = model.get("supported_endpoints")
+            if (
+                model.get("mode") == "audio_transcription"
+                and endpoints
+                and (
+                    STT_BATCH_ENDPOINT in endpoints
+                    or STT_REALTIME_ENDPOINT in endpoints
+                )
+            ):
+                models.append(model["model_group"])
+        default_model = (
+            None
+            if self.source == SOURCE_USER
+            else self._get_reconfigure_subentry().data[CONF_MODEL]
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MODEL, default=default_model): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value=model, label=model)
+                                for model in models
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                            sort=True,
+                        )
+                    )
+                }
+            ),
         )
 
 

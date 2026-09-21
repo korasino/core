@@ -1,9 +1,10 @@
 """Coordinator for the LiteLLM integration."""
 
 from datetime import timedelta
-from typing import override
+from typing import Any, TypedDict, cast, override
 
 from openai import AsyncOpenAI, AuthenticationError, OpenAIError, PermissionDeniedError
+from yarl import URL
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_URL
@@ -22,6 +23,43 @@ UPDATE_INTERVAL_DISCONNECTED = timedelta(minutes=1)
 type LiteLLMConfigEntry = ConfigEntry[LiteLLMDataUpdateCoordinator]
 
 
+class ModelGroupInfo(TypedDict):
+    """LiteLLM model group capabilities used by Home Assistant."""
+
+    model_group: str
+    mode: str | None
+    supported_endpoints: list[str] | None
+    supported_openai_params: list[str] | None
+
+
+async def async_get_model_groups(
+    hass: HomeAssistant, url: str, api_key: str | None
+) -> list[ModelGroupInfo]:
+    """Fetch model group capabilities from LiteLLM."""
+    proxy_url = URL(url)
+    path = proxy_url.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    client = AsyncOpenAI(
+        base_url=str(proxy_url.with_path(path)),
+        api_key=api_key or PLACEHOLDER_API_KEY,
+        # Legacy HTTPX clients are supported at runtime only.
+        http_client=cast(Any, get_async_client(hass)),
+    )
+    try:
+        response = await client.with_options(timeout=10.0).get(
+            "model_group/info",
+            cast_to=object,
+            options={"security": {"bearer_auth": True}},
+        )
+    except (AuthenticationError, PermissionDeniedError) as err:
+        raise ConfigEntryAuthFailed from err
+    except OpenAIError as err:
+        raise UpdateFailed(err) from err
+
+    return cast(dict[str, list[ModelGroupInfo]], response)["data"]
+
+
 class LiteLLMDataUpdateCoordinator(DataUpdateCoordinator[None]):
     """Own the OpenAI client and track LiteLLM proxy availability."""
 
@@ -37,10 +75,15 @@ class LiteLLMDataUpdateCoordinator(DataUpdateCoordinator[None]):
             update_interval=UPDATE_INTERVAL_CONNECTED,
             always_update=False,
         )
+        base_url = URL(config_entry.data[CONF_URL])
         self.client = AsyncOpenAI(
-            base_url=config_entry.data[CONF_URL],
+            base_url=str(base_url),
+            websocket_base_url=str(
+                base_url.with_scheme("wss" if base_url.scheme == "https" else "ws")
+            ),
             api_key=config_entry.data.get(CONF_API_KEY) or PLACEHOLDER_API_KEY,
-            http_client=get_async_client(hass),
+            # Legacy HTTPX clients are supported at runtime only.
+        http_client=cast(Any, get_async_client(hass)),
         )
 
     @override
