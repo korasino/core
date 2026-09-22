@@ -46,17 +46,11 @@ async def async_get_model_groups(
         # Legacy HTTPX clients are supported at runtime only.
         http_client=cast(Any, get_async_client(hass)),
     )
-    try:
-        response = await client.with_options(timeout=10.0).get(
-            "model_group/info",
-            cast_to=object,
-            options={"security": {"bearer_auth": True}},
-        )
-    except (AuthenticationError, PermissionDeniedError) as err:
-        raise ConfigEntryAuthFailed from err
-    except OpenAIError as err:
-        raise UpdateFailed(err) from err
-
+    response = await client.with_options(timeout=10.0).get(
+        "model_group/info",
+        cast_to=object,
+        options={"security": {"bearer_auth": True}},
+    )
     return cast(dict[str, list[ModelGroupInfo]], response)["data"]
 
 
