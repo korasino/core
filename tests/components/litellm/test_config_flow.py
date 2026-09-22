@@ -177,6 +177,38 @@ async def test_duplicate_entry(
     assert result["reason"] == "already_configured"
 
 
+@pytest.mark.parametrize(
+    ("exception", "reason"),
+    [
+        (_status_error(AuthenticationError, 401), "invalid_auth"),
+        (APIConnectionError(request=httpx.Request("GET", TEST_URL)), "cannot_connect"),
+        (Exception("unexpected"), "unknown"),
+    ],
+)
+async def test_stt_subentry_exceptions(
+    hass: HomeAssistant,
+    mock_openai_client: AsyncMock,
+    mock_config_entry: MockConfigEntry,
+    exception: Exception,
+    reason: str,
+) -> None:
+    """Test STT subentry flow aborts when model groups cannot be fetched."""
+    await setup_integration(hass, mock_config_entry)
+
+    with patch(
+        "homeassistant.components.litellm.config_flow.async_get_model_groups",
+        new_callable=AsyncMock,
+        side_effect=exception,
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (mock_config_entry.entry_id, "stt"),
+            context={"source": SOURCE_USER},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == reason
+
+
 @pytest.mark.usefixtures("mock_models")
 async def test_create_conversation_agent(
     hass: HomeAssistant,
