@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_MODEL, CONF_URL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
@@ -28,7 +28,6 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
     TemplateSelector,
 )
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_PROMPT,
@@ -204,9 +203,9 @@ class STTFlowHandler(ConfigSubentryFlow):
                 self.model_groups = await async_get_model_groups(
                     self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
                 )
-            except ConfigEntryAuthFailed:
+            except (AuthenticationError, PermissionDeniedError):
                 return self.async_abort(reason="invalid_auth")
-            except UpdateFailed:
+            except OpenAIError:
                 return self.async_abort(reason="cannot_connect")
             except Exception:
                 _LOGGER.exception("Unexpected exception")
