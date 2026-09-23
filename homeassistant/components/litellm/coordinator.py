@@ -1,9 +1,10 @@
 """Coordinator for the LiteLLM integration."""
 
 from datetime import timedelta
-from typing import Any, cast, override
+from typing import Any, TypedDict, cast, override
 
 from openai import AsyncOpenAI, AuthenticationError, OpenAIError, PermissionDeniedError
+from yarl import URL
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_URL
@@ -13,6 +14,7 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import LOGGER, PLACEHOLDER_API_KEY
+from .url import denormalize_url
 
 # Ping the proxy hourly while it is reachable, and back off to once a minute
 # while it is down so entities recover quickly once it returns.
@@ -20,6 +22,33 @@ UPDATE_INTERVAL_CONNECTED = timedelta(hours=1)
 UPDATE_INTERVAL_DISCONNECTED = timedelta(minutes=1)
 
 type LiteLLMConfigEntry = ConfigEntry[LiteLLMDataUpdateCoordinator]
+
+
+class ModelGroupInfo(TypedDict):
+    """LiteLLM model group capabilities used by Home Assistant."""
+
+    model_group: str
+    mode: str | None
+    supported_endpoints: list[str] | None
+    supported_openai_params: list[str] | None
+
+
+async def async_get_model_groups(
+    hass: HomeAssistant, url: str, api_key: str | None
+) -> list[ModelGroupInfo]:
+    """Fetch model group capabilities from LiteLLM."""
+    client = AsyncOpenAI(
+        base_url=denormalize_url(url),
+        api_key=api_key or PLACEHOLDER_API_KEY,
+        # Legacy HTTPX clients are supported at runtime only.
+        http_client=cast(Any, get_async_client(hass)),
+    )
+    response = await client.with_options(timeout=10.0).get(
+        "model_group/info",
+        cast_to=object,
+        options={"security": {"bearer_auth": True}},
+    )
+    return cast(dict[str, list[ModelGroupInfo]], response)["data"]
 
 
 class LiteLLMDataUpdateCoordinator(DataUpdateCoordinator[None]):
@@ -37,12 +66,27 @@ class LiteLLMDataUpdateCoordinator(DataUpdateCoordinator[None]):
             update_interval=UPDATE_INTERVAL_CONNECTED,
             always_update=False,
         )
+        base_url = URL(config_entry.data[CONF_URL])
         self.client = AsyncOpenAI(
-            base_url=config_entry.data[CONF_URL],
+            base_url=str(base_url),
+            websocket_base_url=str(
+                base_url.with_scheme("wss" if base_url.scheme == "https" else "ws")
+            ),
             api_key=config_entry.data.get(CONF_API_KEY) or PLACEHOLDER_API_KEY,
             # Legacy HTTPX clients are supported at runtime only.
             http_client=cast(Any, get_async_client(hass)),
         )
+        self._model_groups: list[ModelGroupInfo] | None = None
+
+    async def async_get_model_groups(self) -> list[ModelGroupInfo]:
+        """Return the LiteLLM model group capabilities."""
+        if self._model_groups is None:
+            self._model_groups = await async_get_model_groups(
+                self.hass,
+                self.config_entry.data[CONF_URL],
+                self.config_entry.data.get(CONF_API_KEY),
+            )
+        return self._model_groups
 
     @override
     async def _async_update_data(self) -> None:

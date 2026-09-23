@@ -13,6 +13,7 @@ import pytest
 
 from homeassistant.components.litellm.config_flow import CannotConnect, InvalidAuth
 from homeassistant.components.litellm.const import CONF_PROMPT, DOMAIN
+from homeassistant.components.litellm.url import denormalize_url, normalize_url
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_MODEL, CONF_URL
 from homeassistant.core import HomeAssistant
@@ -23,6 +24,32 @@ from . import get_subentry_id, setup_integration
 from .conftest import TEST_URL, models_response
 
 from tests.common import MockConfigEntry
+
+
+@pytest.mark.parametrize(
+    ("url", "normalized", "denormalized"),
+    [
+        (
+            "http://localhost:4000",
+            "http://localhost:4000/v1",
+            "http://localhost:4000",
+        ),
+        (
+            "http://localhost:4000/api/",
+            "http://localhost:4000/api/v1",
+            "http://localhost:4000/api",
+        ),
+        (
+            "http://localhost:4000/api/v1",
+            "http://localhost:4000/api/v1",
+            "http://localhost:4000/api",
+        ),
+    ],
+)
+def test_url_helpers(url: str, normalized: str, denormalized: str) -> None:
+    """Test LiteLLM API URL normalization helpers."""
+    assert normalize_url(url) == normalized
+    assert denormalize_url(normalized) == denormalized
 
 CONVERSATION_MODEL_OPTIONS = [
     {"value": "gpt-3.5-turbo", "label": "gpt-3.5-turbo"},
@@ -175,6 +202,98 @@ async def test_duplicate_entry(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+@pytest.mark.parametrize(
+    ("exception", "reason"),
+    [
+        (
+            AuthenticationError(
+                message="invalid api key",
+                response=httpx.Response(
+                    401, request=httpx.Request("GET", "http://localhost")
+                ),
+                body=None,
+            ),
+            "invalid_auth",
+        ),
+        (
+            APIConnectionError(
+                message="connection failed",
+                request=httpx.Request("GET", "http://localhost"),
+            ),
+            "cannot_connect",
+        ),
+        (Exception("unexpected"), "unknown"),
+    ],
+)
+async def test_stt_subentry_exceptions(
+    hass: HomeAssistant,
+    mock_openai_client: AsyncMock,
+    mock_config_entry: MockConfigEntry,
+    exception: Exception,
+    reason: str,
+) -> None:
+    """Test STT subentry flow aborts when model groups cannot be fetched."""
+    await setup_integration(hass, mock_config_entry)
+
+    with patch(
+        "homeassistant.components.litellm.coordinator.async_get_model_groups",
+        new_callable=AsyncMock,
+        side_effect=exception,
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (mock_config_entry.entry_id, "stt"),
+            context={"source": SOURCE_USER},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == reason
+
+
+async def test_create_stt_subentry(
+    hass: HomeAssistant,
+    mock_openai_client: AsyncMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test creating an STT subentry with a batch transcription model."""
+    await setup_integration(hass, mock_config_entry)
+
+    with patch(
+        "homeassistant.components.litellm.coordinator.async_get_model_groups",
+        new_callable=AsyncMock,
+        return_value=[
+            {
+                "model_group": "home-stt",
+                "mode": "audio_transcription",
+                "supported_endpoints": ["/v1/audio/transcriptions"],
+            },
+            {
+                "model_group": "home-chat",
+                "mode": "chat",
+                "supported_endpoints": ["/v1/chat/completions"],
+            },
+        ],
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (mock_config_entry.entry_id, "stt"),
+            context={"source": SOURCE_USER},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+    schema = result["data_schema"].schema
+    assert schema["model"].config["options"] == [
+        {"value": "home-stt", "label": "home-stt"}
+    ]
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {CONF_MODEL: "home-stt"}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "home-stt"
+    assert result["data"] == {CONF_MODEL: "home-stt"}
 
 
 @pytest.mark.usefixtures("mock_models")

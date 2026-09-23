@@ -34,7 +34,10 @@ from .const import (
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
+    STT_BATCH_ENDPOINT,
 )
+from .coordinator import ModelGroupInfo
+from .url import normalize_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,15 +48,6 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate the API key is invalid."""
-
-
-def _normalize_url(url: str) -> str:
-    """Normalize the proxy URL, ensuring it ends with the OpenAI `/v1` path."""
-    parsed = URL(url.strip())
-    path = parsed.path.rstrip("/")
-    if not path.endswith("/v1"):
-        path = f"{path}/v1"
-    return str(parsed.with_path(path))
 
 
 async def _get_models(hass: HomeAssistant, url: str, api_key: str | None) -> list[str]:
@@ -90,7 +84,10 @@ class LiteLLMConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return subentries supported by this handler."""
-        return {"conversation": ConversationFlowHandler}
+        return {
+            "conversation": ConversationFlowHandler,
+            "stt": STTFlowHandler,
+        }
 
     @override
     async def async_step_user(
@@ -99,7 +96,7 @@ class LiteLLMConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
-            url = _normalize_url(user_input[CONF_URL])
+            url = normalize_url(user_input[CONF_URL])
             api_key = user_input.get(CONF_API_KEY)
             self._async_abort_entries_match({CONF_URL: url})
             try:
@@ -143,6 +140,97 @@ class LiteLLMSubentryFlowHandler(ConfigSubentryFlow):
         entry = self._get_entry()
         self.models = await _get_models(
             self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
+        )
+
+
+class STTFlowHandler(ConfigSubentryFlow):
+    """Handle STT subentry flow."""
+
+    def __init__(self) -> None:
+        """Initialize the STT subentry flow."""
+        self.options: dict[str, Any] = {}
+        self.model_groups: list[ModelGroupInfo] | None = None
+
+    @property
+    def _is_new(self) -> bool:
+        """Return if this is a new subentry."""
+        return self.source == SOURCE_USER
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Create an STT entity."""
+        self.options = {}
+        self.model_groups = None
+        return await self.async_step_init(user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Reconfigure an STT entity."""
+        self.options = self._get_reconfigure_subentry().data.copy()
+        self.model_groups = None
+        return await self.async_step_init(user_input)
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Select an STT model."""
+        entry = self._get_entry()
+        if entry.state is not ConfigEntryState.LOADED:
+            return self.async_abort(reason="entry_not_loaded")
+
+        if self.model_groups is None:
+            try:
+                self.model_groups = await entry.runtime_data.async_get_model_groups()
+            except (AuthenticationError, PermissionDeniedError):
+                return self.async_abort(reason="invalid_auth")
+            except OpenAIError:
+                return self.async_abort(reason="cannot_connect")
+            except Exception:
+                _LOGGER.exception("Unexpected exception")
+                return self.async_abort(reason="unknown")
+
+        models = [
+            model["model_group"]
+            for model in self.model_groups
+            if (
+                model.get("mode") == "audio_transcription"
+                and (endpoints := model.get("supported_endpoints"))
+                and STT_BATCH_ENDPOINT in endpoints
+            )
+        ]
+
+        if user_input is not None:
+            self.options[CONF_MODEL] = user_input[CONF_MODEL]
+            data = {CONF_MODEL: self.options[CONF_MODEL]}
+            if self._is_new:
+                return self.async_create_entry(title=data[CONF_MODEL], data=data)
+            return self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                title=data[CONF_MODEL],
+                data=data,
+            )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_MODEL, default=self.options.get(CONF_MODEL)
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value=model, label=model)
+                                for model in models
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                            sort=True,
+                        )
+                    )
+                }
+            ),
         )
 
 
