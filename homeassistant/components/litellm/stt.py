@@ -1,5 +1,6 @@
 """Speech-to-text support for LiteLLM."""
 
+import base64
 from collections.abc import AsyncIterable
 import io
 from typing import Any, cast, override
@@ -10,7 +11,9 @@ from openai import (
     AuthenticationError,
     OpenAIError,
     PermissionDeniedError,
+    WebSocketConnectionClosedError,
 )
+from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
@@ -18,7 +21,14 @@ from homeassistant.const import CONF_MODEL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import LOGGER, STT_BATCH_ENDPOINT
+from .const import (
+    CONF_AUDIO_CHANNELS,
+    CONF_AUDIO_FORMAT_OVERRIDE,
+    CONF_AUDIO_SAMPLE_RATE,
+    LOGGER,
+    STT_BATCH_ENDPOINT,
+    STT_REALTIME_ENDPOINT,
+)
 from .coordinator import LiteLLMConfigEntry
 from .entity import LiteLLMEntity
 
@@ -74,6 +84,9 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         super().__init__(entry, subentry)
         self._supported_endpoints = supported_endpoints
         self._supports_language = "language" in supported_openai_params
+        self._audio_format_override = subentry.data.get(
+            CONF_AUDIO_FORMAT_OVERRIDE, False
+        )
 
     @property
     @override
@@ -195,10 +208,118 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> stt.SpeechResult:
         """Process an audio stream."""
+        if STT_REALTIME_ENDPOINT in self._supported_endpoints:
+            LOGGER.debug("LiteLLM STT using realtime endpoint for model %s", self.model)
+            return await self._async_process_realtime(metadata, stream)
         if STT_BATCH_ENDPOINT in self._supported_endpoints:
             LOGGER.debug("LiteLLM STT using batch endpoint for model %s", self.model)
             return await self._async_process_batch(metadata, stream)
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
+
+    async def _async_process_realtime(
+        self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
+    ) -> stt.SpeechResult:
+        """Stream audio to LiteLLM's realtime transcription endpoint."""
+        coordinator = self.entry.runtime_data
+        try:
+            async with coordinator.client.realtime.connect(
+                model=self.model,
+                extra_query={"intent": "transcription"},
+                max_retries=0,
+            ) as connection:
+                coordinator.async_set_updated_data(None)
+                await connection.session.update(
+                    session=cast(
+                        Any,
+                        {
+                            "type": "transcription",
+                            "audio": {
+                                "input": {
+                                    "format": self._realtime_audio_format(metadata),
+                                    "transcription": {
+                                        "model": self.model,
+                                        **self._transcription_options(metadata),
+                                    },
+                                    "turn_detection": None,
+                                }
+                            },
+                        },
+                    ),
+                )
+                async for chunk in stream:
+                    await connection.input_audio_buffer.append(
+                        audio=base64.b64encode(chunk).decode()
+                    )
+                await connection.input_audio_buffer.commit()
+
+                async for event in connection:
+                    if (
+                        event.type
+                        == "conversation.item.input_audio_transcription.completed"
+                    ):
+                        if event.transcript:
+                            return stt.SpeechResult(
+                                event.transcript, stt.SpeechResultState.SUCCESS
+                            )
+                        break
+                    if (
+                        event.type
+                        == "conversation.item.input_audio_transcription.failed"
+                    ):
+                        LOGGER.error(
+                            "Realtime STT transcription failed: %s",
+                            event.error.message,
+                        )
+                        break
+                    if event.type == "error":
+                        LOGGER.error("Realtime STT error: %s", event)
+                        break
+        except (AuthenticationError, PermissionDeniedError) as err:
+            await coordinator.async_request_refresh()
+            LOGGER.error("Authentication error during realtime STT: %s", err)
+        except APIConnectionError as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except InvalidStatus as err:
+            if err.response.status_code in (401, 403):
+                await coordinator.async_request_refresh()
+                LOGGER.error("Authentication error during realtime STT: %s", err)
+            else:
+                coordinator.async_set_updated_data(None)
+                LOGGER.error("Realtime STT websocket handshake failed: %s", err)
+        except OSError as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except WebSocketConnectionClosedError as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except OpenAIError as err:
+            coordinator.async_set_updated_data(None)
+            LOGGER.error("Error during realtime STT: %s", err)
+        except ConnectionClosed as err:
+            coordinator.mark_connection_error()
+            LOGGER.error("Connection error during realtime STT: %s", err)
+        except WebSocketException as err:
+            coordinator.async_set_updated_data(None)
+            LOGGER.error("WebSocket error during realtime STT: %s", err)
+
+        return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
+
+    def _realtime_audio_format(
+        self, metadata: stt.SpeechMetadata
+    ) -> dict[str, int | str]:
+        """Return the PCM format declared for the realtime session."""
+        if not self._audio_format_override:
+            return {
+                "type": "audio/pcm",
+                "rate": metadata.sample_rate.value,
+                "channels": metadata.channel.value,
+            }
+        return {
+            "type": "audio/pcm",
+            "rate": int(self.subentry.data[CONF_AUDIO_SAMPLE_RATE]),
+            "channels": int(self.subentry.data[CONF_AUDIO_CHANNELS]),
+        }
 
     def _transcription_options(self, metadata: stt.SpeechMetadata) -> dict[str, str]:
         """Return optional transcription parameters supported by the model."""

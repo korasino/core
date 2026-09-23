@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterable
 import io
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import wave
 
@@ -15,7 +16,12 @@ from openai import (
 import pytest
 
 from homeassistant.components import stt
-from homeassistant.components.litellm.const import DOMAIN
+from homeassistant.components.litellm.const import (
+    CONF_AUDIO_CHANNELS,
+    CONF_AUDIO_FORMAT_OVERRIDE,
+    CONF_AUDIO_SAMPLE_RATE,
+    DOMAIN,
+)
 from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_URL
 from homeassistant.core import HomeAssistant
@@ -36,6 +42,7 @@ async def _setup_stt(
     hass: HomeAssistant,
     mock_openai_client: AsyncMock,
     endpoints: list[str],
+    subentry_data: dict[str, bool | str] | None = None,
 ) -> stt.SpeechToTextEntity:
     """Set up a LiteLLM STT entity."""
     entry = MockConfigEntry(
@@ -44,7 +51,7 @@ async def _setup_stt(
         data={CONF_URL: TEST_URL, CONF_API_KEY: "bla"},
         subentries_data=[
             ConfigSubentryData(
-                data={CONF_MODEL: "home-stt"},
+                data={CONF_MODEL: "home-stt", **(subentry_data or {})},
                 subentry_id="STT",
                 subentry_type="stt",
                 title="home-stt",
@@ -93,7 +100,17 @@ async def test_stt_entity_properties(
     assert entity.supported_formats == list(stt.AudioFormats)
     assert entity.supported_codecs == list(stt.AudioCodecs)
     assert entity.supported_bit_rates == list(stt.AudioBitRates)
-    assert entity.supported_sample_rates == list(stt.AudioSampleRates)
+    assert entity.supported_sample_rates == [
+        stt.AudioSampleRates.SAMPLERATE_8000,
+        stt.AudioSampleRates.SAMPLERATE_11000,
+        stt.AudioSampleRates.SAMPLERATE_16000,
+        stt.AudioSampleRates.SAMPLERATE_18900,
+        stt.AudioSampleRates.SAMPLERATE_22000,
+        stt.AudioSampleRates.SAMPLERATE_32000,
+        stt.AudioSampleRates.SAMPLERATE_37800,
+        stt.AudioSampleRates.SAMPLERATE_44100,
+        stt.AudioSampleRates.SAMPLERATE_48000,
+    ]
     assert entity.supported_channels == list(stt.AudioChannels)
 
 
@@ -228,3 +245,102 @@ async def test_batch_stt_provider_error_keeps_entity_available(
 
     assert result.result is stt.SpeechResultState.ERROR
     assert entity.available
+
+
+class _RealtimeConnection:
+    """Minimal realtime connection used by STT tests."""
+
+    def __init__(self) -> None:
+        self.session_updates: list[dict] = []
+        self.audio: list[str] = []
+        self.session = self
+        self.input_audio_buffer = self
+        self.commits = 0
+
+    async def update(self, *, session: dict) -> None:
+        """Record a session update."""
+        self.session_updates.append(session)
+
+    async def append(self, *, audio: str) -> None:
+        """Record an audio chunk."""
+        self.audio.append(audio)
+
+    async def commit(self) -> None:
+        """Record the end of the HA audio stream."""
+        self.commits += 1
+
+    def __aiter__(self):
+        """Iterate a completed transcription event."""
+
+        async def events():
+            yield SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                transcript="Turn on the light",
+            )
+
+        return events()
+
+
+class _RealtimeContext:
+    """Context manager for a fake realtime connection."""
+
+    def __init__(self, connection: _RealtimeConnection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> _RealtimeConnection:
+        return self.connection
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+async def test_realtime_stt_uses_input_audio_metadata(
+    hass: HomeAssistant, mock_openai_client: AsyncMock
+) -> None:
+    """Test realtime STT declares the incoming audio format by default."""
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/realtime"])
+    connection = _RealtimeConnection()
+    mock_openai_client.realtime.connect = MagicMock(
+        return_value=_RealtimeContext(connection)
+    )
+
+    result = await entity.async_process_audio_stream(
+        _metadata(), _audio_stream(b"audio")
+    )
+
+    assert result == stt.SpeechResult(
+        "Turn on the light", stt.SpeechResultState.SUCCESS
+    )
+    assert connection.session_updates[0]["audio"]["input"]["format"] == {
+        "type": "audio/pcm",
+        "rate": 16000,
+        "channels": 1,
+    }
+
+
+async def test_realtime_stt_uses_configured_audio_format(
+    hass: HomeAssistant, mock_openai_client: AsyncMock
+) -> None:
+    """Test realtime STT uses the configured audio format override."""
+    entity = await _setup_stt(
+        hass,
+        mock_openai_client,
+        ["/v1/realtime"],
+        {
+            CONF_AUDIO_FORMAT_OVERRIDE: True,
+            CONF_AUDIO_SAMPLE_RATE: "24000",
+            CONF_AUDIO_CHANNELS: "2",
+        },
+    )
+    connection = _RealtimeConnection()
+    mock_openai_client.realtime.connect = MagicMock(
+        return_value=_RealtimeContext(connection)
+    )
+
+    await entity.async_process_audio_stream(_metadata(), _audio_stream(b"audio"))
+
+    assert connection.session_updates[0]["audio"]["input"]["format"] == {
+        "type": "audio/pcm",
+        "rate": 24000,
+        "channels": 2,
+    }

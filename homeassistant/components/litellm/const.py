@@ -9,6 +9,9 @@ DOMAIN = "litellm"
 LOGGER = logging.getLogger(__package__)
 
 CONF_VOCABULARY = "vocabulary"
+CONF_AUDIO_FORMAT_OVERRIDE = "audio_format_override"
+CONF_AUDIO_SAMPLE_RATE = "audio_sample_rate"
+CONF_AUDIO_CHANNELS = "audio_channels"
 
 # LiteLLM proxies may run without authentication. The OpenAI client requires a
 # non-empty API key, so we send a placeholder when the user did not provide one.

@@ -7,6 +7,7 @@ from openai import AsyncOpenAI, AuthenticationError, OpenAIError, PermissionDeni
 import probatio
 from yarl import URL
 
+from homeassistant.components import stt
 from homeassistant.config_entries import (
     SOURCE_USER,
     ConfigEntry,
@@ -22,6 +23,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -30,11 +32,15 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_AUDIO_CHANNELS,
+    CONF_AUDIO_FORMAT_OVERRIDE,
+    CONF_AUDIO_SAMPLE_RATE,
     CONF_PROMPT,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
     STT_BATCH_ENDPOINT,
+    STT_REALTIME_ENDPOINT,
 )
 from .coordinator import ModelGroupInfo
 from .url import normalize_url
@@ -156,6 +162,37 @@ class STTFlowHandler(ConfigSubentryFlow):
         """Return if this is a new subentry."""
         return self.source == SOURCE_USER
 
+    def _supports_realtime(self, model_name: str) -> bool:
+        """Return whether the selected model supports realtime transcription."""
+        assert self.model_groups is not None
+        return any(
+            model["model_group"] == model_name
+            and STT_REALTIME_ENDPOINT in (model.get("supported_endpoints") or [])
+            for model in self.model_groups
+        )
+
+    def _finish(self) -> SubentryFlowResult:
+        """Finish creating or updating the STT subentry."""
+        entry = self._get_entry()
+        model = self.options[CONF_MODEL]
+        data = {CONF_MODEL: model}
+        if self.options.get(CONF_AUDIO_FORMAT_OVERRIDE):
+            data.update(
+                {
+                    CONF_AUDIO_FORMAT_OVERRIDE: True,
+                    CONF_AUDIO_SAMPLE_RATE: self.options[CONF_AUDIO_SAMPLE_RATE],
+                    CONF_AUDIO_CHANNELS: self.options[CONF_AUDIO_CHANNELS],
+                }
+            )
+        if self._is_new:
+            return self.async_create_entry(title=model, data=data)
+        return self.async_update_and_abort(
+            entry,
+            self._get_reconfigure_subentry(),
+            title=model,
+            data=data,
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -197,21 +234,18 @@ class STTFlowHandler(ConfigSubentryFlow):
             if (
                 model.get("mode") == "audio_transcription"
                 and (endpoints := model.get("supported_endpoints"))
-                and STT_BATCH_ENDPOINT in endpoints
+                and (
+                    STT_BATCH_ENDPOINT in endpoints
+                    or STT_REALTIME_ENDPOINT in endpoints
+                )
             )
         ]
 
         if user_input is not None:
             self.options[CONF_MODEL] = user_input[CONF_MODEL]
-            data = {CONF_MODEL: self.options[CONF_MODEL]}
-            if self._is_new:
-                return self.async_create_entry(title=data[CONF_MODEL], data=data)
-            return self.async_update_and_abort(
-                entry,
-                self._get_reconfigure_subentry(),
-                title=data[CONF_MODEL],
-                data=data,
-            )
+            if self._supports_realtime(self.options[CONF_MODEL]):
+                return await self.async_step_model()
+            return self._finish()
 
         return self.async_show_form(
             step_id="init",
@@ -231,6 +265,75 @@ class STTFlowHandler(ConfigSubentryFlow):
                     )
                 }
             ),
+        )
+
+    async def async_step_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Configure realtime audio options."""
+        if user_input is not None:
+            self.options.update(user_input)
+            if self.options.get(CONF_AUDIO_FORMAT_OVERRIDE):
+                return await self.async_step_audio_format()
+            return self._finish()
+
+        return self.async_show_form(
+            step_id="model",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Optional(
+                        CONF_AUDIO_FORMAT_OVERRIDE,
+                        default=self.options.get(CONF_AUDIO_FORMAT_OVERRIDE, False),
+                    ): BooleanSelector(),
+                }
+            ),
+            last_step=True,
+        )
+
+    async def async_step_audio_format(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Configure the realtime audio format override."""
+        if user_input is not None:
+            self.options.update(user_input)
+            return self._finish()
+
+        sample_rate_options = [
+            SelectOptionDict(value=str(rate.value), label=f"{rate.value} Hz")
+            for rate in (*stt.AudioSampleRates,)
+        ]
+        if "24000" not in {option["value"] for option in sample_rate_options}:
+            sample_rate_options.append(
+                SelectOptionDict(value="24000", label="24000 Hz")
+            )
+        return self.async_show_form(
+            step_id="audio_format",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_AUDIO_SAMPLE_RATE,
+                        default=str(self.options.get(CONF_AUDIO_SAMPLE_RATE, 24000)),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=sample_rate_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    probatio.Required(
+                        CONF_AUDIO_CHANNELS,
+                        default=str(self.options.get(CONF_AUDIO_CHANNELS, 1)),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value="1", label="Mono"),
+                                SelectOptionDict(value="2", label="Stereo"),
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            last_step=True,
         )
 
 
