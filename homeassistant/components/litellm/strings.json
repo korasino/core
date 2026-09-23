@@ -71,6 +71,17 @@
             "model": "The model to use to transcribe speech"
           },
           "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline. LiteLLM does not report language capabilities for individual backend models."
+        },
+        "model": {
+          "data": {
+            "prompt": "[%key:common::config_flow::data::prompt%]",
+            "vocabulary": "Vocabulary"
+          },
+          "data_description": {
+            "prompt": "Additional context or instructions sent with each transcription to help the model interpret the audio. You can use a Home Assistant template.",
+            "vocabulary": "Comma-separated list of words or phrases sent with each transcription to help the model recognize names and other terms accurately. You can use a Home Assistant template. Example: kitchen light, hallway light, thermostat."
+          },
+          "description": "Configure the options supported by the selected speech-to-text model."
         }
       }
     }

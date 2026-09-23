@@ -12,7 +12,7 @@ from openai import (
 import pytest
 
 from homeassistant.components.litellm.config_flow import CannotConnect, InvalidAuth
-from homeassistant.components.litellm.const import CONF_PROMPT, DOMAIN
+from homeassistant.components.litellm.const import CONF_PROMPT, CONF_VOCABULARY, DOMAIN
 from homeassistant.components.litellm.url import denormalize_url, normalize_url
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_MODEL, CONF_URL
@@ -267,6 +267,7 @@ async def test_create_stt_subentry(
                 "model_group": "home-stt",
                 "mode": "audio_transcription",
                 "supported_endpoints": ["/v1/audio/transcriptions"],
+                "supported_openai_params": ["language", "prompt", "keywords"],
             },
             {
                 "model_group": "home-chat",
@@ -291,9 +292,24 @@ async def test_create_stt_subentry(
         result["flow_id"], {CONF_MODEL: "home-stt"}
     )
 
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "model"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_PROMPT: "Transcribe Home Assistant commands.",
+            CONF_VOCABULARY: "kitchen light, hallway light",
+        },
+    )
+
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "home-stt"
-    assert result["data"] == {CONF_MODEL: "home-stt"}
+    assert result["data"] == {
+        CONF_MODEL: "home-stt",
+        CONF_PROMPT: "Transcribe Home Assistant commands.",
+        CONF_VOCABULARY: "kitchen light, hallway light",
+    }
 
 
 @pytest.mark.usefixtures("mock_models")

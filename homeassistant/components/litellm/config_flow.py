@@ -31,6 +31,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_PROMPT,
+    CONF_VOCABULARY,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
@@ -156,6 +157,31 @@ class STTFlowHandler(ConfigSubentryFlow):
         """Return if this is a new subentry."""
         return self.source == SOURCE_USER
 
+    def _supported_params(self, model_name: str) -> set[str]:
+        """Return transcription parameters advertised for a model group."""
+        assert self.model_groups is not None
+        for model in self.model_groups:
+            if model["model_group"] == model_name:
+                return set(model.get("supported_openai_params") or [])
+        return set()
+
+    def _finish(self) -> SubentryFlowResult:
+        """Finish creating or updating the STT subentry."""
+        entry = self._get_entry()
+        model = self.options[CONF_MODEL]
+        data = {CONF_MODEL: model}
+        for key in (CONF_PROMPT, CONF_VOCABULARY):
+            if key in self.options:
+                data[key] = self.options[key]
+        if self._is_new:
+            return self.async_create_entry(title=model, data=data)
+        return self.async_update_and_abort(
+            entry,
+            self._get_reconfigure_subentry(),
+            title=model,
+            data=data,
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -203,15 +229,7 @@ class STTFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             self.options[CONF_MODEL] = user_input[CONF_MODEL]
-            data = {CONF_MODEL: self.options[CONF_MODEL]}
-            if self._is_new:
-                return self.async_create_entry(title=data[CONF_MODEL], data=data)
-            return self.async_update_and_abort(
-                entry,
-                self._get_reconfigure_subentry(),
-                title=data[CONF_MODEL],
-                data=data,
-            )
+            return await self.async_step_model()
 
         return self.async_show_form(
             step_id="init",
@@ -231,6 +249,43 @@ class STTFlowHandler(ConfigSubentryFlow):
                     )
                 }
             ),
+        )
+
+    async def async_step_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Configure options supported by the selected model."""
+        model = self.options[CONF_MODEL]
+        supported_params = self._supported_params(model)
+        if user_input is not None:
+            self.options.update(user_input)
+            return self._finish()
+
+        step_schema: dict[Any, Any] = {}
+        if "prompt" in supported_params:
+            step_schema[
+                probatio.Optional(
+                    CONF_PROMPT,
+                    description={
+                        "suggested_value": self.options.get(CONF_PROMPT, "")
+                    },
+                )
+            ] = TemplateSelector()
+        if "keywords" in supported_params:
+            step_schema[
+                probatio.Optional(
+                    CONF_VOCABULARY,
+                    description={
+                        "suggested_value": self.options.get(CONF_VOCABULARY, "")
+                    },
+                )
+            ] = TemplateSelector()
+        if not step_schema:
+            return self._finish()
+        return self.async_show_form(
+            step_id="model",
+            data_schema=probatio.Schema(step_schema),
+            last_step=True,
         )
 
 
