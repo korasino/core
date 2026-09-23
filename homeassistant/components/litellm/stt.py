@@ -1,9 +1,9 @@
 """Speech-to-text support for LiteLLM."""
 
-from collections.abc import AsyncIterable
 import base64
+from collections.abc import AsyncIterable
 import io
-from typing import override
+from typing import Any, cast, override
 import wave
 
 from openai import (
@@ -18,6 +18,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketExce
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_MODEL
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
@@ -214,9 +215,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             "channels": int(self.subentry.data[CONF_AUDIO_CHANNELS]),
         }
 
-    def _transcription_options(
-        self, metadata: stt.SpeechMetadata
-    ) -> dict[str, str]:
+    def _transcription_options(self, metadata: stt.SpeechMetadata) -> dict[str, str]:
         """Return optional transcription parameters supported by the model."""
         if not self._supports_language:
             return {}
@@ -242,7 +241,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             response = await coordinator.client.audio.transcriptions.create(
                 model=self.model,
                 file=("audio.wav", wav_buffer.getvalue()),
-                **self._transcription_options(metadata),
+                **cast(Any, self._transcription_options(metadata)),
             )
         except (AuthenticationError, PermissionDeniedError) as err:
             await coordinator.async_request_refresh()
@@ -256,9 +255,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         else:
             coordinator.async_set_updated_data(None)
             if response.text:
-                return stt.SpeechResult(
-                    response.text, stt.SpeechResultState.SUCCESS
-                )
+                return stt.SpeechResult(response.text, stt.SpeechResultState.SUCCESS)
 
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
 
@@ -275,19 +272,22 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             ) as connection:
                 coordinator.async_set_updated_data(None)
                 await connection.session.update(
-                    session={
-                        "type": "transcription",
-                        "audio": {
-                            "input": {
-                                "format": self._realtime_audio_format(metadata),
-                                "transcription": {
-                                    "model": self.model,
-                                    **self._transcription_options(metadata),
-                                },
-                                "turn_detection": None,
-                            }
+                    session=cast(
+                        Any,
+                        {
+                            "type": "transcription",
+                            "audio": {
+                                "input": {
+                                    "format": self._realtime_audio_format(metadata),
+                                    "transcription": {
+                                        "model": self.model,
+                                        **self._transcription_options(metadata),
+                                    },
+                                    "turn_detection": None,
+                                }
+                            },
                         },
-                    }
+                    ),
                 )
                 async for chunk in stream:
                     await connection.input_audio_buffer.append(

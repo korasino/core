@@ -92,9 +92,7 @@ async def test_stt_entity_properties(
     hass: HomeAssistant, mock_openai_client: AsyncMock
 ) -> None:
     """Test STT entity audio properties."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
 
     assert "en-US" in entity.supported_languages
     assert "pl-PL" in entity.supported_languages
@@ -106,13 +104,9 @@ async def test_stt_entity_properties(
     assert entity.supported_channels == [stt.AudioChannels.CHANNEL_MONO]
 
 
-async def test_batch_stt(
-    hass: HomeAssistant, mock_openai_client: AsyncMock
-) -> None:
+async def test_batch_stt(hass: HomeAssistant, mock_openai_client: AsyncMock) -> None:
     """Test batch transcription."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         return_value=MagicMock(text="Turn on the light")
     )
@@ -138,9 +132,7 @@ async def test_batch_stt_empty_response_keeps_entity_available(
     hass: HomeAssistant, mock_openai_client: AsyncMock
 ) -> None:
     """Test an empty batch response keeps the proxy available."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
     coordinator = entity.entry.runtime_data
     coordinator.mark_connection_error()
     mock_openai_client.audio.transcriptions.create = AsyncMock(
@@ -159,9 +151,7 @@ async def test_batch_stt_connection_error_marks_entity_unavailable(
     hass: HomeAssistant, mock_openai_client: AsyncMock
 ) -> None:
     """Test batch connection errors mark the entity unavailable."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         side_effect=APIConnectionError(request=None)
     )
@@ -178,12 +168,10 @@ async def test_batch_stt_connection_error_marks_entity_unavailable(
 async def test_batch_stt_auth_error_refreshes_coordinator(
     hass: HomeAssistant,
     mock_openai_client: AsyncMock,
-    error_cls: type[AuthenticationError] | type[PermissionDeniedError],
+    error_cls: type[AuthenticationError | PermissionDeniedError],
 ) -> None:
     """Test batch authentication errors refresh coordinator state."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         side_effect=error_cls(
             message="invalid api key",
@@ -209,9 +197,7 @@ async def test_batch_stt_provider_error_keeps_entity_available(
     hass: HomeAssistant, mock_openai_client: AsyncMock
 ) -> None:
     """Test provider errors do not mark the proxy unavailable."""
-    entity = await _setup_stt(
-        hass, mock_openai_client, ["/v1/audio/transcriptions"]
-    )
+    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         side_effect=OpenAIError("bad request")
     )
