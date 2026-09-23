@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterable
 import io
-from typing import override
+from typing import Any, cast, override
 import wave
 
 from openai import (
@@ -27,7 +27,7 @@ from .entity import LiteLLMEntity
 
 def _render_template(hass: HomeAssistant, value: str) -> str:
     """Render an STT option template."""
-    return Template(value, hass).async_render(parse_result=False)
+    return cast(str, Template(value, hass).async_render(parse_result=False))
 
 
 async def async_setup_entry(
@@ -242,7 +242,7 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             response = await coordinator.client.audio.transcriptions.create(
                 model=self.model,
                 file=("audio.wav", wav_buffer.getvalue()),
-                **self._transcription_options(metadata),
+                **cast(Any, self._transcription_options(metadata)),
             )
         except (AuthenticationError, PermissionDeniedError) as err:
             await coordinator.async_request_refresh()
@@ -258,8 +258,6 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         else:
             coordinator.async_set_updated_data(None)
             if response.text:
-                return stt.SpeechResult(
-                    response.text, stt.SpeechResultState.SUCCESS
-                )
+                return stt.SpeechResult(response.text, stt.SpeechResultState.SUCCESS)
 
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)

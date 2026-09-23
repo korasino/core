@@ -209,7 +209,7 @@ class STTFlowHandler(ConfigSubentryFlow):
         if self.model_groups is None:
             try:
                 self.model_groups = await entry.runtime_data.async_get_model_groups()
-            except (AuthenticationError, PermissionDeniedError):
+            except AuthenticationError, PermissionDeniedError:
                 return self.async_abort(reason="invalid_auth")
             except OpenAIError:
                 return self.async_abort(reason="cannot_connect")
@@ -266,9 +266,7 @@ class STTFlowHandler(ConfigSubentryFlow):
             step_schema[
                 probatio.Optional(
                     CONF_PROMPT,
-                    description={
-                        "suggested_value": self.options.get(CONF_PROMPT, "")
-                    },
+                    description={"suggested_value": self.options.get(CONF_PROMPT, "")},
                 )
             ] = TemplateSelector()
         if "keywords" in supported_params:

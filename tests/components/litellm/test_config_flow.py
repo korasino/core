@@ -51,6 +51,7 @@ def test_url_helpers(url: str, normalized: str, denormalized: str) -> None:
     assert normalize_url(url) == normalized
     assert denormalize_url(normalized) == denormalized
 
+
 CONVERSATION_MODEL_OPTIONS = [
     {"value": "gpt-3.5-turbo", "label": "gpt-3.5-turbo"},
     {"value": "gpt-4", "label": "gpt-4"},
