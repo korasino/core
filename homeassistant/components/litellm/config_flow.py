@@ -4,7 +4,7 @@ import logging
 from typing import Any, cast, override
 
 from openai import AsyncOpenAI, AuthenticationError, OpenAIError, PermissionDeniedError
-import voluptuous as vol
+import probatio
 from yarl import URL
 
 from homeassistant.config_entries import (
@@ -31,14 +31,13 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_PROMPT,
-    CONF_VOCABULARY,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
     STT_BATCH_ENDPOINT,
-    STT_REALTIME_ENDPOINT,
 )
-from .coordinator import ModelGroupInfo, async_get_model_groups
+from .coordinator import ModelGroupInfo
+from .url import normalize_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,15 +48,6 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate the API key is invalid."""
-
-
-def _normalize_url(url: str) -> str:
-    """Normalize the proxy URL, ensuring it ends with the OpenAI `/v1` path."""
-    parsed = URL(url.strip())
-    path = parsed.path.rstrip("/")
-    if not path.endswith("/v1"):
-        path = f"{path}/v1"
-    return str(parsed.with_path(path))
 
 
 async def _get_models(hass: HomeAssistant, url: str, api_key: str | None) -> list[str]:
@@ -106,7 +96,7 @@ class LiteLLMConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors = {}
         if user_input is not None:
-            url = _normalize_url(user_input[CONF_URL])
+            url = normalize_url(user_input[CONF_URL])
             api_key = user_input.get(CONF_API_KEY)
             self._async_abort_entries_match({CONF_URL: url})
             try:
@@ -128,10 +118,10 @@ class LiteLLMConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(CONF_URL): str,
-                    vol.Optional(CONF_API_KEY): str,
+                    probatio.Required(CONF_URL): str,
+                    probatio.Optional(CONF_API_KEY): str,
                 }
             ),
             errors=errors,
@@ -182,14 +172,6 @@ class STTFlowHandler(ConfigSubentryFlow):
         self.model_groups = None
         return await self.async_step_init(user_input)
 
-    def _supported_params(self, model_name: str) -> set[str]:
-        """Return transcription parameters advertised for a model group."""
-        assert self.model_groups is not None
-        for model in self.model_groups:
-            if model["model_group"] == model_name:
-                return set(model.get("supported_openai_params") or [])
-        return set()
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -200,10 +182,8 @@ class STTFlowHandler(ConfigSubentryFlow):
 
         if self.model_groups is None:
             try:
-                self.model_groups = await async_get_model_groups(
-                    self.hass, entry.data[CONF_URL], entry.data.get(CONF_API_KEY)
-                )
-            except (AuthenticationError, PermissionDeniedError):
+                self.model_groups = await entry.runtime_data.async_get_model_groups()
+            except AuthenticationError, PermissionDeniedError:
                 return self.async_abort(reason="invalid_auth")
             except OpenAIError:
                 return self.async_abort(reason="cannot_connect")
@@ -217,22 +197,27 @@ class STTFlowHandler(ConfigSubentryFlow):
             if (
                 model.get("mode") == "audio_transcription"
                 and (endpoints := model.get("supported_endpoints"))
-                and (
-                    STT_BATCH_ENDPOINT in endpoints
-                    or STT_REALTIME_ENDPOINT in endpoints
-                )
+                and STT_BATCH_ENDPOINT in endpoints
             )
         ]
 
         if user_input is not None:
             self.options[CONF_MODEL] = user_input[CONF_MODEL]
-            return await self.async_step_model()
+            data = {CONF_MODEL: self.options[CONF_MODEL]}
+            if self._is_new:
+                return self.async_create_entry(title=data[CONF_MODEL], data=data)
+            return self.async_update_and_abort(
+                entry,
+                self._get_reconfigure_subentry(),
+                title=data[CONF_MODEL],
+                data=data,
+            )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(
+                    probatio.Required(
                         CONF_MODEL, default=self.options.get(CONF_MODEL)
                     ): SelectSelector(
                         SelectSelectorConfig(
@@ -246,58 +231,6 @@ class STTFlowHandler(ConfigSubentryFlow):
                     )
                 }
             ),
-        )
-
-    async def async_step_model(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Manage options supported by the selected STT model."""
-        entry = self._get_entry()
-        model = self.options[CONF_MODEL]
-        supported_params = self._supported_params(model)
-
-        if user_input is not None:
-            self.options.update(user_input)
-        else:
-            step_schema: dict[Any, Any] = {}
-            if "prompt" in supported_params:
-                step_schema[
-                    vol.Optional(
-                        CONF_PROMPT,
-                        description={
-                            "suggested_value": self.options.get(CONF_PROMPT, "")
-                        },
-                    )
-                ] = TemplateSelector()
-            if "keywords" in supported_params:
-                step_schema[
-                    vol.Optional(
-                        CONF_VOCABULARY,
-                        description={
-                            "suggested_value": self.options.get(CONF_VOCABULARY, "")
-                        },
-                    )
-                ] = TemplateSelector()
-
-            if step_schema:
-                return self.async_show_form(
-                    step_id="model",
-                    data_schema=vol.Schema(step_schema),
-                    last_step=True,
-                )
-
-        data = {
-            key: self.options[key]
-            for key in (CONF_MODEL, CONF_PROMPT, CONF_VOCABULARY)
-            if key in self.options
-        }
-        if self._is_new:
-            return self.async_create_entry(title=model, data=data)
-        return self.async_update_and_abort(
-            entry,
-            self._get_reconfigure_subentry(),
-            title=model,
-            data=data,
         )
 
 
@@ -377,16 +310,16 @@ class ConversationFlowHandler(LiteLLMSubentryFlowHandler):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(
+                    probatio.Required(
                         CONF_MODEL, default=self.options.get(CONF_MODEL)
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=options, mode=SelectSelectorMode.DROPDOWN, sort=True
                         ),
                     ),
-                    vol.Optional(
+                    probatio.Optional(
                         CONF_PROMPT,
                         description={
                             "suggested_value": self.options.get(
@@ -395,7 +328,7 @@ class ConversationFlowHandler(LiteLLMSubentryFlowHandler):
                             )
                         },
                     ): TemplateSelector(),
-                    vol.Optional(
+                    probatio.Optional(
                         CONF_LLM_HASS_API,
                         default=self.options.get(
                             CONF_LLM_HASS_API,

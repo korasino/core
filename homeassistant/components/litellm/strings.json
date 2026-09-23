@@ -27,7 +27,6 @@
         "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
         "entry_not_loaded": "The main integration entry is not loaded. Please ensure the integration is loaded before reconfiguring.",
         "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
         "unknown": "[%key:common::config_flow::error::unknown%]"
       },
       "entry_type": "Conversation agent",
@@ -71,18 +70,7 @@
           "data_description": {
             "model": "The model to use to transcribe speech"
           },
-          "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline."
-        },
-        "model": {
-          "data": {
-            "prompt": "[%key:common::config_flow::data::prompt%]",
-            "vocabulary": "Vocabulary"
-          },
-          "data_description": {
-            "prompt": "Additional context or instructions sent with each transcription to help the model interpret the audio. You can use a Home Assistant template.",
-            "vocabulary": "Vocabulary sent with each transcription to help the model recognize names and other terms accurately. You can use a Home Assistant template."
-          },
-          "description": "Configure the options supported by the selected speech-to-text model."
+          "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline. LiteLLM does not report language capabilities for individual backend models."
         }
       }
     }

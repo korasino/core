@@ -1,9 +1,8 @@
 """Speech-to-text support for LiteLLM."""
 
 from collections.abc import AsyncIterable
-import base64
 import io
-from typing import override
+from typing import Any, cast, override
 import wave
 
 from openai import (
@@ -11,27 +10,17 @@ from openai import (
     AuthenticationError,
     OpenAIError,
     PermissionDeniedError,
-    WebSocketConnectionClosedError,
 )
-from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_PROMPT, CONF_URL
+from homeassistant.const import CONF_MODEL
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.template import Template
 
-from .const import CONF_VOCABULARY, LOGGER, STT_BATCH_ENDPOINT, STT_REALTIME_ENDPOINT
-from .coordinator import LiteLLMConfigEntry, async_get_model_groups
+from .const import LOGGER, STT_BATCH_ENDPOINT
+from .coordinator import LiteLLMConfigEntry
 from .entity import LiteLLMEntity
-
-
-def _render_template(hass: HomeAssistant, value: str) -> str:
-    """Render an STT option template."""
-    return Template(value, hass).async_render(parse_result=False)
-
 
 
 async def async_setup_entry(
@@ -48,9 +37,7 @@ async def async_setup_entry(
     if not stt_subentries:
         return
 
-    model_groups = await async_get_model_groups(
-        hass, config_entry.data[CONF_URL], config_entry.data.get(CONF_API_KEY)
-    )
+    model_groups = await config_entry.runtime_data.async_get_model_groups()
     capabilities_by_model = {
         model["model_group"]: (
             model.get("supported_endpoints") or [],
@@ -87,221 +74,137 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         super().__init__(entry, subentry)
         self._supported_endpoints = supported_endpoints
         self._supports_language = "language" in supported_openai_params
-        self._supports_prompt = "prompt" in supported_openai_params
-        self._supports_keywords = "keywords" in supported_openai_params
 
     @property
     @override
     def supported_languages(self) -> list[str]:
         """Return supported languages."""
-        # LiteLLM does not expose per-model STT language capabilities.
-        # Advertise a broad set of commonly supported languages; unsupported
-        # languages may be rejected by the provider at runtime.
+        # LiteLLM does not expose model-specific language capabilities. This
+        # static OpenAI-compatible list is only an API-level advertisement; the
+        # selected backend may reject languages it does not support.
         return [
             "af-ZA",
-            "am-ET",
-            "ar-AE",
-            "ar-BH",
-            "ar-DZ",
-            "ar-EG",
-            "ar-IL",
-            "ar-IQ",
-            "ar-JO",
-            "ar-KW",
-            "ar-LB",
-            "ar-MA",
-            "ar-OM",
-            "ar-PS",
-            "ar-QA",
             "ar-SA",
-            "ar-TN",
-            "ar-YE",
+            "hy-AM",
             "az-AZ",
-            "bg-BG",
-            "bn-BD",
-            "bn-IN",
+            "be-BY",
             "bs-BA",
+            "bg-BG",
             "ca-ES",
+            "zh-CN",
+            "hr-HR",
             "cs-CZ",
             "da-DK",
-            "de-AT",
-            "de-CH",
+            "nl-NL",
+            "en-US",
+            "et-EE",
+            "fi-FI",
+            "fr-FR",
+            "gl-ES",
             "de-DE",
             "el-GR",
-            "en-AU",
-            "en-CA",
-            "en-GB",
-            "en-GH",
-            "en-HK",
-            "en-IE",
-            "en-IN",
-            "en-KE",
-            "en-NG",
-            "en-NZ",
-            "en-PH",
-            "en-PK",
-            "en-SG",
-            "en-TZ",
-            "en-US",
-            "en-ZA",
-            "es-AR",
-            "es-BO",
-            "es-CL",
-            "es-CO",
-            "es-CR",
-            "es-DO",
-            "es-EC",
-            "es-ES",
-            "es-GT",
-            "es-HN",
-            "es-MX",
-            "es-NI",
-            "es-PA",
-            "es-PE",
-            "es-PR",
-            "es-PY",
-            "es-SV",
-            "es-US",
-            "es-UY",
-            "es-VE",
-            "et-EE",
-            "eu-ES",
-            "fa-IR",
-            "fi-FI",
-            "fil-PH",
-            "fr-BE",
-            "fr-CA",
-            "fr-CH",
-            "fr-FR",
-            "ga-IE",
-            "gl-ES",
-            "gu-IN",
             "he-IL",
             "hi-IN",
-            "hr-HR",
             "hu-HU",
-            "hy-AM",
-            "id-ID",
             "is-IS",
-            "it-CH",
+            "id-ID",
             "it-IT",
-            "iw-IL",
             "ja-JP",
-            "jv-ID",
-            "ka-GE",
-            "kk-KZ",
-            "km-KH",
             "kn-IN",
+            "kk-KZ",
             "ko-KR",
-            "lb-LU",
-            "lo-LA",
-            "lt-LT",
             "lv-LV",
+            "lt-LT",
             "mk-MK",
-            "ml-IN",
-            "mn-MN",
-            "mr-IN",
             "ms-MY",
-            "my-MM",
-            "nb-NO",
+            "mr-IN",
+            "mi-NZ",
             "ne-NP",
-            "nl-BE",
-            "nl-NL",
             "no-NO",
+            "fa-IR",
             "pl-PL",
-            "pt-BR",
             "pt-PT",
             "ro-RO",
             "ru-RU",
-            "si-LK",
+            "sr-RS",
             "sk-SK",
             "sl-SI",
-            "sq-AL",
-            "sr-RS",
-            "su-ID",
-            "sv-SE",
+            "es-ES",
             "sw-KE",
-            "sw-TZ",
+            "sv-SE",
+            "fil-PH",
             "ta-IN",
-            "ta-LK",
-            "ta-MY",
-            "ta-SG",
-            "te-IN",
             "th-TH",
             "tr-TR",
             "uk-UA",
-            "ur-IN",
             "ur-PK",
-            "uz-UZ",
             "vi-VN",
-            "zh-CN",
-            "zh-HK",
-            "zh-TW",
-            "zu-ZA",
+            "cy-GB",
         ]
 
     @property
     @override
     def supported_formats(self) -> list[stt.AudioFormats]:
         """Return supported formats."""
-        return [stt.AudioFormats.WAV]
+        # LiteLLM exposes the OpenAI transcription contract but does not
+        # report model-specific audio capabilities, so mirror its API-level
+        # input declarations here.
+        return [stt.AudioFormats.WAV, stt.AudioFormats.OGG]
 
     @property
     @override
     def supported_codecs(self) -> list[stt.AudioCodecs]:
         """Return supported codecs."""
-        return [stt.AudioCodecs.PCM]
+        return [stt.AudioCodecs.PCM, stt.AudioCodecs.OPUS]
 
     @property
     @override
     def supported_bit_rates(self) -> list[stt.AudioBitRates]:
         """Return supported bit rates."""
-        return [stt.AudioBitRates.BITRATE_16]
+        return [
+            stt.AudioBitRates.BITRATE_8,
+            stt.AudioBitRates.BITRATE_16,
+            stt.AudioBitRates.BITRATE_24,
+            stt.AudioBitRates.BITRATE_32,
+        ]
 
     @property
     @override
     def supported_sample_rates(self) -> list[stt.AudioSampleRates]:
         """Return supported sample rates."""
-        return [stt.AudioSampleRates.SAMPLERATE_16000]
+        return [
+            stt.AudioSampleRates.SAMPLERATE_8000,
+            stt.AudioSampleRates.SAMPLERATE_11000,
+            stt.AudioSampleRates.SAMPLERATE_16000,
+            stt.AudioSampleRates.SAMPLERATE_18900,
+            stt.AudioSampleRates.SAMPLERATE_22000,
+            stt.AudioSampleRates.SAMPLERATE_32000,
+            stt.AudioSampleRates.SAMPLERATE_37800,
+            stt.AudioSampleRates.SAMPLERATE_44100,
+            stt.AudioSampleRates.SAMPLERATE_48000,
+        ]
 
     @property
     @override
     def supported_channels(self) -> list[stt.AudioChannels]:
         """Return supported channels."""
-        return [stt.AudioChannels.CHANNEL_MONO]
+        return [stt.AudioChannels.CHANNEL_MONO, stt.AudioChannels.CHANNEL_STEREO]
 
     @override
     async def async_process_audio_stream(
         self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
     ) -> stt.SpeechResult:
         """Process an audio stream."""
-        if STT_REALTIME_ENDPOINT in self._supported_endpoints:
-            LOGGER.debug("LiteLLM STT using realtime endpoint for model %s", self.model)
-            return await self._async_process_realtime(metadata, stream)
         if STT_BATCH_ENDPOINT in self._supported_endpoints:
             LOGGER.debug("LiteLLM STT using batch endpoint for model %s", self.model)
             return await self._async_process_batch(metadata, stream)
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
 
-    def _transcription_options(
-        self, metadata: stt.SpeechMetadata
-    ) -> dict[str, str | list[str]]:
+    def _transcription_options(self, metadata: stt.SpeechMetadata) -> dict[str, str]:
         """Return optional transcription parameters supported by the model."""
-        options: dict[str, str | list[str]] = {}
-        if self._supports_language:
-            # LiteLLM follows the OpenAI transcription contract, which uses
-            # ISO-639-1 language codes rather than regional locale tags.
-            options["language"] = metadata.language.split("-")[0]
-        hass = self.entry.runtime_data.hass
-        if self._supports_prompt and (prompt_template := self.subentry.data.get(CONF_PROMPT)):
-            if prompt := _render_template(hass, prompt_template):
-                options["prompt"] = prompt
-        if self._supports_keywords and (
-            vocabulary_template := self.subentry.data.get(CONF_VOCABULARY)
-        ):
-            if vocabulary := _render_template(hass, vocabulary_template):
-                options["keywords"] = [vocabulary]
-        return options
+        if not self._supports_language:
+            return {}
+        return {"language": metadata.language.split("-")[0]}
 
     async def _async_process_batch(
         self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
@@ -311,19 +214,22 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         async for chunk in stream:
             audio_bytes.extend(chunk)
 
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(metadata.channel.value)
-            wav_file.setsampwidth(metadata.bit_rate.value // 8)
-            wav_file.setframerate(metadata.sample_rate.value)
-            wav_file.writeframes(audio_bytes)
+        audio_data = bytes(audio_bytes)
+        if metadata.format == stt.AudioFormats.WAV:
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, "wb") as wav_file:
+                wav_file.setnchannels(metadata.channel.value)
+                wav_file.setsampwidth(metadata.bit_rate.value // 8)
+                wav_file.setframerate(metadata.sample_rate.value)
+                wav_file.writeframes(audio_data)
+            audio_data = wav_buffer.getvalue()
 
         coordinator = self.entry.runtime_data
         try:
             response = await coordinator.client.audio.transcriptions.create(
                 model=self.model,
-                file=("audio.wav", wav_buffer.getvalue()),
-                **self._transcription_options(metadata),
+                file=(f"audio.{metadata.format.value}", audio_data),
+                **cast(Any, self._transcription_options(metadata)),
             )
         except (AuthenticationError, PermissionDeniedError) as err:
             await coordinator.async_request_refresh()
@@ -334,118 +240,9 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         except OpenAIError as err:
             coordinator.async_set_updated_data(None)
             LOGGER.error("Error during STT: %s", err)
-        except TemplateError as err:
-            LOGGER.error("Error rendering STT template: %s", err)
         else:
             coordinator.async_set_updated_data(None)
             if response.text:
-                return stt.SpeechResult(
-                    response.text, stt.SpeechResultState.SUCCESS
-                )
-
-        return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
-
-    async def _async_process_realtime(
-        self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
-    ) -> stt.SpeechResult:
-        """Stream audio to LiteLLM's realtime transcription endpoint."""
-        coordinator = self.entry.runtime_data
-        try:
-            async with coordinator.client.realtime.connect(
-                model=self.model,
-                extra_query={"intent": "transcription"},
-                max_retries=0,
-            ) as connection:
-                coordinator.async_set_updated_data(None)
-                transcription: dict[str, str | list[str]] = {
-                    "model": self.model,
-                    **self._transcription_options(metadata),
-                }
-                LOGGER.debug(
-                    "LiteLLM realtime STT session.update: model=%s language=%s keywords=%d sample_rate=%d",
-                    self.model,
-                    transcription.get("language"),
-                    len(transcription.get("keywords", [])),
-                    metadata.sample_rate.value,
-                )
-                await connection.session.update(
-                    session={
-                        "type": "transcription",
-                        "audio": {
-                            "input": {
-                                "format": {
-                                    "type": "audio/pcm",
-                                    "rate": 16000,
-                                    "channels": 1,
-                                },
-                                "transcription": transcription,
-                                "turn_detection": None,
-                            }
-                        },
-                    }
-                )
-                async for chunk in stream:
-                    await connection.input_audio_buffer.append(
-                        audio=base64.b64encode(chunk).decode()
-                    )
-                LOGGER.debug("LiteLLM realtime STT committing input audio buffer")
-                await connection.input_audio_buffer.commit()
-
-                async for event in connection:
-                    if (
-                        event.type
-                        == "conversation.item.input_audio_transcription.completed"
-                    ):
-                        if event.transcript:
-                            LOGGER.debug(
-                                "LiteLLM realtime STT received final transcript (%d chars)",
-                                len(event.transcript),
-                            )
-                            return stt.SpeechResult(
-                                event.transcript, stt.SpeechResultState.SUCCESS
-                            )
-                        break
-                    if (
-                        event.type
-                        == "conversation.item.input_audio_transcription.failed"
-                    ):
-                        LOGGER.error(
-                            "Realtime STT transcription failed: %s",
-                            event.error.message,
-                        )
-                        break
-                    if event.type == "error":
-                        LOGGER.error("Realtime STT error: %s", event)
-                        break
-        except (AuthenticationError, PermissionDeniedError) as err:
-            await coordinator.async_request_refresh()
-            LOGGER.error("Authentication error during realtime STT: %s", err)
-        except APIConnectionError as err:
-            coordinator.mark_connection_error()
-            LOGGER.error("Connection error during realtime STT: %s", err)
-        except InvalidStatus as err:
-            if err.response.status_code in (401, 403):
-                await coordinator.async_request_refresh()
-                LOGGER.error("Authentication error during realtime STT: %s", err)
-            else:
-                coordinator.async_set_updated_data(None)
-                LOGGER.error("Realtime STT websocket handshake failed: %s", err)
-        except OSError as err:
-            coordinator.mark_connection_error()
-            LOGGER.error("Connection error during realtime STT: %s", err)
-        except WebSocketConnectionClosedError as err:
-            coordinator.mark_connection_error()
-            LOGGER.error("Connection error during realtime STT: %s", err)
-        except OpenAIError as err:
-            coordinator.async_set_updated_data(None)
-            LOGGER.error("Error during realtime STT: %s", err)
-        except ConnectionClosed as err:
-            coordinator.mark_connection_error()
-            LOGGER.error("Connection error during realtime STT: %s", err)
-        except WebSocketException as err:
-            coordinator.async_set_updated_data(None)
-            LOGGER.error("WebSocket error during realtime STT: %s", err)
-        except TemplateError as err:
-            LOGGER.error("Error rendering STT template: %s", err)
+                return stt.SpeechResult(response.text, stt.SpeechResultState.SUCCESS)
 
         return stt.SpeechResult(None, stt.SpeechResultState.ERROR)

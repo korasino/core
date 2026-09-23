@@ -5,13 +5,39 @@ from unittest.mock import AsyncMock
 import httpx
 from openai import APIConnectionError, AuthenticationError
 import pytest
+import respx
 
+from homeassistant.components.litellm.coordinator import async_get_model_groups
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 
 from . import setup_integration
 
 from tests.common import MockConfigEntry
+
+
+@respx.mock
+async def test_get_model_groups(hass: HomeAssistant) -> None:
+    """Test fetching LiteLLM model group capabilities."""
+    route = respx.get("http://localhost:4000/model_group/info").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "model_group": "home-stt",
+                        "mode": "audio_transcription",
+                        "supported_endpoints": ["/v1/audio/transcriptions"],
+                    }
+                ]
+            },
+        )
+    )
+
+    result = await async_get_model_groups(hass, "http://localhost:4000/v1", "bla")
+
+    assert result[0]["model_group"] == "home-stt"
+    assert route.calls.last.request.headers["Authorization"] == "Bearer bla"
 
 
 async def test_load_unload_entry(

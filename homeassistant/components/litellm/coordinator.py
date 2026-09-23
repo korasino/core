@@ -14,6 +14,7 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import LOGGER, PLACEHOLDER_API_KEY
+from .url import denormalize_url
 
 # Ping the proxy hourly while it is reachable, and back off to once a minute
 # while it is down so entities recover quickly once it returns.
@@ -36,12 +37,8 @@ async def async_get_model_groups(
     hass: HomeAssistant, url: str, api_key: str | None
 ) -> list[ModelGroupInfo]:
     """Fetch model group capabilities from LiteLLM."""
-    proxy_url = URL(url)
-    path = proxy_url.path.rstrip("/")
-    if path.endswith("/v1"):
-        path = path[:-3]
     client = AsyncOpenAI(
-        base_url=str(proxy_url.with_path(path)),
+        base_url=denormalize_url(url),
         api_key=api_key or PLACEHOLDER_API_KEY,
         # Legacy HTTPX clients are supported at runtime only.
         http_client=cast(Any, get_async_client(hass)),
@@ -77,8 +74,19 @@ class LiteLLMDataUpdateCoordinator(DataUpdateCoordinator[None]):
             ),
             api_key=config_entry.data.get(CONF_API_KEY) or PLACEHOLDER_API_KEY,
             # Legacy HTTPX clients are supported at runtime only.
-        http_client=cast(Any, get_async_client(hass)),
+            http_client=cast(Any, get_async_client(hass)),
         )
+        self._model_groups: list[ModelGroupInfo] | None = None
+
+    async def async_get_model_groups(self) -> list[ModelGroupInfo]:
+        """Return the LiteLLM model group capabilities."""
+        if self._model_groups is None:
+            self._model_groups = await async_get_model_groups(
+                self.hass,
+                self.config_entry.data[CONF_URL],
+                self.config_entry.data.get(CONF_API_KEY),
+            )
+        return self._model_groups
 
     @override
     async def _async_update_data(self) -> None:
