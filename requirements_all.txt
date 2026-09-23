@@ -1804,12 +1804,14 @@ open-garage==0.2.0
 open-meteo==0.3.2
 
 # homeassistant.components.cloud
-# homeassistant.components.litellm
 # homeassistant.components.llama_cpp
 # homeassistant.components.open_router
 # homeassistant.components.openai_conversation
 # homeassistant.components.ovhcloud_ai_endpoints
 openai==3.10.0
+
+# homeassistant.components.litellm
+openai[realtime]==3.10.0
 
 # homeassistant.components.openerz
 openerz-api==0.3.0
