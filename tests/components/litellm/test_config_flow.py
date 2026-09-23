@@ -17,6 +17,7 @@ from homeassistant.components.litellm.const import (
     CONF_AUDIO_FORMAT_OVERRIDE,
     CONF_AUDIO_SAMPLE_RATE,
     CONF_PROMPT,
+    CONF_VOCABULARY,
     DOMAIN,
 )
 from homeassistant.components.litellm.url import denormalize_url, normalize_url
@@ -274,6 +275,7 @@ async def test_create_stt_subentry(
                 "model_group": "home-stt",
                 "mode": "audio_transcription",
                 "supported_endpoints": ["/v1/audio/transcriptions"],
+                "supported_openai_params": ["language", "prompt", "keywords"],
             },
             {
                 "model_group": "home-chat",
@@ -298,9 +300,24 @@ async def test_create_stt_subentry(
             result["flow_id"], {CONF_MODEL: "home-stt"}
         )
 
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "model"
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"],
+            {
+                CONF_PROMPT: "Transcribe Home Assistant commands.",
+                CONF_VOCABULARY: "kitchen light, hallway light",
+            },
+        )
+
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "home-stt"
-    assert result["data"] == {CONF_MODEL: "home-stt"}
+    assert result["data"] == {
+        CONF_MODEL: "home-stt",
+        CONF_PROMPT: "Transcribe Home Assistant commands.",
+        CONF_VOCABULARY: "kitchen light, hallway light",
+    }
 
     subentry_id = get_subentry_id(mock_config_entry, "stt")
     result = await mock_config_entry.start_subentry_reconfigure_flow(hass, subentry_id)
@@ -310,8 +327,24 @@ async def test_create_stt_subentry(
         result["flow_id"], {CONF_MODEL: "home-stt"}
     )
 
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "model"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {
+            CONF_PROMPT: "Transcribe Home Assistant commands.",
+            CONF_VOCABULARY: "kitchen light, hallway light",
+        },
+    )
+
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    assert mock_config_entry.subentries[subentry_id].data == {
+        CONF_MODEL: "home-stt",
+        CONF_PROMPT: "Transcribe Home Assistant commands.",
+        CONF_VOCABULARY: "kitchen light, hallway light",
+    }
 
 
 async def test_create_realtime_stt_with_audio_format_override(

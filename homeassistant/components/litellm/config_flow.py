@@ -36,6 +36,7 @@ from .const import (
     CONF_AUDIO_FORMAT_OVERRIDE,
     CONF_AUDIO_SAMPLE_RATE,
     CONF_PROMPT,
+    CONF_VOCABULARY,
     DOMAIN,
     PLACEHOLDER_API_KEY,
     RECOMMENDED_CONVERSATION_OPTIONS,
@@ -171,11 +172,22 @@ class STTFlowHandler(ConfigSubentryFlow):
             for model in self.model_groups
         )
 
+    def _supported_params(self, model_name: str) -> set[str]:
+        """Return transcription parameters advertised for a model group."""
+        assert self.model_groups is not None
+        for model in self.model_groups:
+            if model["model_group"] == model_name:
+                return set(model.get("supported_openai_params") or [])
+        return set()
+
     def _finish(self) -> SubentryFlowResult:
         """Finish creating or updating the STT subentry."""
         entry = self._get_entry()
         model = self.options[CONF_MODEL]
         data = {CONF_MODEL: model}
+        for key in (CONF_PROMPT, CONF_VOCABULARY):
+            if key in self.options:
+                data[key] = self.options[key]
         if self.options.get(CONF_AUDIO_FORMAT_OVERRIDE):
             data.update(
                 {
@@ -243,7 +255,12 @@ class STTFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             self.options[CONF_MODEL] = user_input[CONF_MODEL]
-            if self._supports_realtime(self.options[CONF_MODEL]):
+            if self._supports_realtime(
+                self.options[CONF_MODEL]
+            ) or self._supported_params(self.options[CONF_MODEL]) & {
+                "prompt",
+                "keywords",
+            }:
                 return await self.async_step_model()
             return self._finish()
 
@@ -270,23 +287,41 @@ class STTFlowHandler(ConfigSubentryFlow):
     async def async_step_model(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Configure realtime audio options."""
+        """Configure STT model options."""
         if user_input is not None:
             self.options.update(user_input)
             if self.options.get(CONF_AUDIO_FORMAT_OVERRIDE):
                 return await self.async_step_audio_format()
             return self._finish()
 
+        supported_params = self._supported_params(self.options[CONF_MODEL])
+        step_schema: dict[Any, Any] = {}
+        if self._supports_realtime(self.options[CONF_MODEL]):
+            step_schema[
+                probatio.Optional(
+                    CONF_AUDIO_FORMAT_OVERRIDE,
+                    default=self.options.get(CONF_AUDIO_FORMAT_OVERRIDE, False),
+                )
+            ] = BooleanSelector()
+        if "prompt" in supported_params:
+            step_schema[
+                probatio.Optional(
+                    CONF_PROMPT,
+                    description={"suggested_value": self.options.get(CONF_PROMPT, "")},
+                )
+            ] = TemplateSelector()
+        if "keywords" in supported_params:
+            step_schema[
+                probatio.Optional(
+                    CONF_VOCABULARY,
+                    description={
+                        "suggested_value": self.options.get(CONF_VOCABULARY, "")
+                    },
+                )
+            ] = TemplateSelector()
         return self.async_show_form(
             step_id="model",
-            data_schema=probatio.Schema(
-                {
-                    probatio.Optional(
-                        CONF_AUDIO_FORMAT_OVERRIDE,
-                        default=self.options.get(CONF_AUDIO_FORMAT_OVERRIDE, False),
-                    ): BooleanSelector(),
-                }
-            ),
+            data_schema=probatio.Schema(step_schema),
             last_step=True,
         )
 

@@ -17,20 +17,28 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketExce
 
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
-from homeassistant.const import CONF_MODEL
+from homeassistant.const import CONF_MODEL, CONF_PROMPT
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.template import Template
 
 from .const import (
     CONF_AUDIO_CHANNELS,
     CONF_AUDIO_FORMAT_OVERRIDE,
     CONF_AUDIO_SAMPLE_RATE,
+    CONF_VOCABULARY,
     LOGGER,
     STT_BATCH_ENDPOINT,
     STT_REALTIME_ENDPOINT,
 )
 from .coordinator import LiteLLMConfigEntry
 from .entity import LiteLLMEntity
+
+
+def _render_template(hass: HomeAssistant, value: str) -> str:
+    """Render an STT option template."""
+    return cast(str, Template(value, hass).async_render(parse_result=False))
 
 
 async def async_setup_entry(
@@ -321,11 +329,25 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
             "channels": int(self.subentry.data[CONF_AUDIO_CHANNELS]),
         }
 
-    def _transcription_options(self, metadata: stt.SpeechMetadata) -> dict[str, str]:
+    def _transcription_options(
+        self, metadata: stt.SpeechMetadata
+    ) -> dict[str, str | list[str]]:
         """Return optional transcription parameters supported by the model."""
         if not self._supports_language:
-            return {}
-        return {"language": metadata.language.split("-")[0]}
+            options: dict[str, str | list[str]] = {}
+        else:
+            options = {"language": metadata.language.split("-")[0]}
+        hass = self.entry.runtime_data.hass
+        if prompt_template := self.subentry.data.get(CONF_PROMPT):
+            if prompt := _render_template(hass, prompt_template):
+                options["prompt"] = prompt
+        if vocabulary_template := self.subentry.data.get(CONF_VOCABULARY):
+            vocabulary = _render_template(hass, vocabulary_template)
+            if keywords := [
+                item.strip() for item in vocabulary.split(",") if item.strip()
+            ]:
+                options["keywords"] = keywords
+        return options
 
     async def _async_process_batch(
         self, metadata: stt.SpeechMetadata, stream: AsyncIterable[bytes]
@@ -361,6 +383,8 @@ class LiteLLMSTTEntity(stt.SpeechToTextEntity, LiteLLMEntity):
         except OpenAIError as err:
             coordinator.async_set_updated_data(None)
             LOGGER.error("Error during STT: %s", err)
+        except TemplateError as err:
+            LOGGER.error("Error rendering STT template: %s", err)
         else:
             coordinator.async_set_updated_data(None)
             if response.text:

@@ -20,10 +20,11 @@ from homeassistant.components.litellm.const import (
     CONF_AUDIO_CHANNELS,
     CONF_AUDIO_FORMAT_OVERRIDE,
     CONF_AUDIO_SAMPLE_RATE,
+    CONF_VOCABULARY,
     DOMAIN,
 )
 from homeassistant.config_entries import ConfigSubentryData
-from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_URL
+from homeassistant.const import CONF_API_KEY, CONF_MODEL, CONF_PROMPT, CONF_URL
 from homeassistant.core import HomeAssistant
 
 from . import setup_integration
@@ -42,6 +43,7 @@ async def _setup_stt(
     hass: HomeAssistant,
     mock_openai_client: AsyncMock,
     endpoints: list[str],
+    supported_openai_params: list[str] | None = None,
     subentry_data: dict[str, bool | str] | None = None,
 ) -> stt.SpeechToTextEntity:
     """Set up a LiteLLM STT entity."""
@@ -67,7 +69,7 @@ async def _setup_stt(
                 "model_group": "home-stt",
                 "mode": "audio_transcription",
                 "supported_endpoints": endpoints,
-                "supported_openai_params": ["language"],
+                "supported_openai_params": supported_openai_params or ["language"],
             }
         ],
     ):
@@ -116,7 +118,20 @@ async def test_stt_entity_properties(
 
 async def test_batch_stt(hass: HomeAssistant, mock_openai_client: AsyncMock) -> None:
     """Test batch transcription."""
-    entity = await _setup_stt(hass, mock_openai_client, ["/v1/audio/transcriptions"])
+    entity = await _setup_stt(
+        hass,
+        mock_openai_client,
+        ["/v1/audio/transcriptions"],
+        ["language", "prompt", "keywords"],
+        {
+            CONF_PROMPT: "Transcribe {{ states('sensor.context') }} commands.",
+            CONF_VOCABULARY: (
+                "Kitchen light, Hallway light, {{ states('sensor.term') }}"
+            ),
+        },
+    )
+    hass.states.async_set("sensor.context", "office")
+    hass.states.async_set("sensor.term", "thermostat")
     mock_openai_client.audio.transcriptions.create = AsyncMock(
         return_value=MagicMock(text="Turn on the light")
     )
@@ -131,6 +146,8 @@ async def test_batch_stt(hass: HomeAssistant, mock_openai_client: AsyncMock) -> 
     call = mock_openai_client.audio.transcriptions.create.call_args.kwargs
     assert call["model"] == "home-stt"
     assert call["language"] == "en"
+    assert call["prompt"] == "Transcribe office commands."
+    assert call["keywords"] == ["Kitchen light", "Hallway light", "thermostat"]
     assert call["file"][0] == "audio.wav"
     with wave.open(io.BytesIO(call["file"][1]), "rb") as wav_file:
         assert wav_file.getnchannels() == 1
@@ -326,7 +343,7 @@ async def test_realtime_stt_uses_configured_audio_format(
         hass,
         mock_openai_client,
         ["/v1/realtime"],
-        {
+        subentry_data={
             CONF_AUDIO_FORMAT_OVERRIDE: True,
             CONF_AUDIO_SAMPLE_RATE: "24000",
             CONF_AUDIO_CHANNELS: "2",
