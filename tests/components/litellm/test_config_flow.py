@@ -12,7 +12,13 @@ from openai import (
 import pytest
 
 from homeassistant.components.litellm.config_flow import CannotConnect, InvalidAuth
-from homeassistant.components.litellm.const import CONF_PROMPT, DOMAIN
+from homeassistant.components.litellm.const import (
+    CONF_AUDIO_CHANNELS,
+    CONF_AUDIO_FORMAT_OVERRIDE,
+    CONF_AUDIO_SAMPLE_RATE,
+    CONF_PROMPT,
+    DOMAIN,
+)
 from homeassistant.components.litellm.url import denormalize_url, normalize_url
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_MODEL, CONF_URL
@@ -294,6 +300,68 @@ async def test_create_stt_subentry(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "home-stt"
     assert result["data"] == {CONF_MODEL: "home-stt"}
+
+
+async def test_create_realtime_stt_with_audio_format_override(
+    hass: HomeAssistant,
+    mock_openai_client: AsyncMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test configuring a realtime STT audio format override."""
+    await setup_integration(hass, mock_config_entry)
+
+    with patch(
+        "homeassistant.components.litellm.coordinator.async_get_model_groups",
+        new_callable=AsyncMock,
+        return_value=[
+            {
+                "model_group": "realtime-stt",
+                "mode": "audio_transcription",
+                "supported_endpoints": ["/v1/realtime"],
+            }
+        ],
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (mock_config_entry.entry_id, "stt"),
+            context={"source": SOURCE_USER},
+        )
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {CONF_MODEL: "realtime-stt"}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "model"
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {CONF_AUDIO_FORMAT_OVERRIDE: True}
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "audio_format"
+        schema = result["data_schema"].schema
+        assert CONF_AUDIO_SAMPLE_RATE in schema
+        assert CONF_AUDIO_CHANNELS in schema
+        assert any(
+            option["value"] == "24000"
+            for option in schema[CONF_AUDIO_SAMPLE_RATE].config["options"]
+        )
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"],
+            {
+                CONF_AUDIO_SAMPLE_RATE: "24000",
+                CONF_AUDIO_CHANNELS: "2",
+            },
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_MODEL: "realtime-stt",
+        CONF_AUDIO_FORMAT_OVERRIDE: True,
+        CONF_AUDIO_SAMPLE_RATE: "24000",
+        CONF_AUDIO_CHANNELS: "2",
+    }
 
 
 @pytest.mark.usefixtures("mock_models")

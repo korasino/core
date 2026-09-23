@@ -8,6 +8,10 @@ from homeassistant.helpers import llm
 DOMAIN = "litellm"
 LOGGER = logging.getLogger(__package__)
 
+CONF_AUDIO_FORMAT_OVERRIDE = "audio_format_override"
+CONF_AUDIO_SAMPLE_RATE = "audio_sample_rate"
+CONF_AUDIO_CHANNELS = "audio_channels"
+
 # LiteLLM proxies may run without authentication. The OpenAI client requires a
 # non-empty API key, so we send a placeholder when the user did not provide one.
 PLACEHOLDER_API_KEY = "sk-no-key-required"
@@ -18,3 +22,4 @@ RECOMMENDED_CONVERSATION_OPTIONS = {
 }
 
 STT_BATCH_ENDPOINT = "/v1/audio/transcriptions"
+STT_REALTIME_ENDPOINT = "/v1/realtime"

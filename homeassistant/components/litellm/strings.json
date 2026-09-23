@@ -70,7 +70,27 @@
           "data_description": {
             "model": "The model to use to transcribe speech"
           },
-          "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline. LiteLLM does not report language capabilities for individual backend models."
+          "description": "Select the speech-to-text model. The transcription language is selected in the Assist pipeline. LiteLLM does not report language capabilities for individual backend models. Realtime audio format overrides must match the incoming audio; LiteLLM does not resample audio."
+        },
+        "model": {
+          "data": {
+            "audio_format_override": "Override realtime audio format"
+          },
+          "data_description": {
+            "audio_format_override": "Enable this only when the configured realtime audio format matches the incoming audio."
+          },
+          "description": "Configure realtime transcription options."
+        },
+        "audio_format": {
+          "data": {
+            "audio_sample_rate": "Sample rate",
+            "audio_channels": "Channels"
+          },
+          "data_description": {
+            "audio_sample_rate": "Sample rate of the incoming PCM audio in Hz.",
+            "audio_channels": "Number of channels in the incoming PCM audio."
+          },
+          "description": "The override must describe the actual incoming PCM16 audio. LiteLLM does not convert it."
         }
       }
     }
