@@ -282,12 +282,24 @@ async def test_create_stt_subentry(
             context={"source": SOURCE_USER},
         )
 
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "init"
+        schema = result["data_schema"].schema
+        assert schema["model"].config["options"] == [
+            {"value": "home-stt", "label": "home-stt"}
+        ]
+
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {CONF_MODEL: "home-stt"}
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "home-stt"
+    assert result["data"] == {CONF_MODEL: "home-stt"}
+
+    subentry_id = get_subentry_id(mock_config_entry, "stt")
+    result = await mock_config_entry.start_subentry_reconfigure_flow(hass, subentry_id)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
-    schema = result["data_schema"].schema
-    assert schema["model"].config["options"] == [
-        {"value": "home-stt", "label": "home-stt"}
-    ]
 
     result = await hass.config_entries.subentries.async_configure(
         result["flow_id"], {CONF_MODEL: "home-stt"}
@@ -505,15 +517,17 @@ async def test_reconfigure_conversation_agent_disable_llm_api(
     assert key.default() == []
 
 
+@pytest.mark.parametrize("subentry_type", ["conversation", "stt"])
 async def test_reconfigure_entry_not_loaded(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
+    subentry_type: str,
 ) -> None:
     """Test reconfiguring aborts when the main entry is not loaded."""
     mock_config_entry.add_to_hass(hass)
 
     result = await hass.config_entries.subentries.async_init(
-        (mock_config_entry.entry_id, "conversation"),
+        (mock_config_entry.entry_id, subentry_type),
         context={"source": SOURCE_USER},
     )
 
