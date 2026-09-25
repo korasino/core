@@ -1,0 +1,88 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Usługa jest już skonfigurowana"
+    },
+    "error": {
+      "cannot_connect": "Nie można połączyć się z proxy LiteLLM",
+      "invalid_auth": "Nieprawidłowe uwierzytelnienie",
+      "invalid_response": "LiteLLM zwrócił odpowiedź o nieoczekiwanej strukturze.",
+      "unknown": "Nieoczekiwany błąd"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "api_key": "Klucz API",
+          "url": "Adres URL"
+        },
+        "data_description": {
+          "api_key": "Opcjonalny klucz API LiteLLM lub klucz wirtualny. Pozostaw puste, jeśli proxy nie wymaga uwierzytelniania.",
+          "url": "Podstawowy adres URL proxy LiteLLM wraz z hostem i portem"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "abort": {
+        "cannot_connect": "Nie można połączyć się z proxy LiteLLM",
+        "entry_not_loaded": "Główny wpis integracji nie jest załadowany. Przed ponowną konfiguracją upewnij się, że integracja jest załadowana.",
+        "invalid_auth": "Nieprawidłowe uwierzytelnienie",
+        "invalid_response": "LiteLLM zwrócił odpowiedź o nieoczekiwanej strukturze.",
+        "reconfigure_successful": "Konfiguracja została zaktualizowana",
+        "unknown": "Nieoczekiwany błąd"
+      },
+      "entry_type": "Agent konwersacji",
+      "initiate_flow": {
+        "reconfigure": "Skonfiguruj ponownie agenta konwersacji",
+        "user": "Dodaj agenta konwersacji"
+      },
+      "step": {
+        "init": {
+          "data": {
+            "llm_hass_api": "Kontroluj Home Assistant",
+            "model": "Model",
+            "prompt": "Instrukcje"
+          },
+          "data_description": {
+            "llm_hass_api": "Wybierz narzędzia, których model może używać do obsługi urządzeń i encji.",
+            "model": "Model używany przez agenta konwersacji",
+            "prompt": "Określ, jak ma odpowiadać model językowy. Możesz użyć szablonu."
+          },
+          "description": "Skonfiguruj agenta konwersacji"
+        }
+      }
+    },
+    "stt": {
+      "abort": {
+        "cannot_connect": "Nie można połączyć się z proxy LiteLLM",
+        "entry_not_loaded": "Główny wpis integracji nie jest załadowany. Przed ponowną konfiguracją upewnij się, że integracja jest załadowana.",
+        "invalid_auth": "Nieprawidłowe uwierzytelnienie",
+        "invalid_response": "LiteLLM zwrócił odpowiedź o nieoczekiwanej strukturze.",
+        "unknown": "Nieoczekiwany błąd"
+      },
+      "entry_type": "Rozpoznawanie mowy",
+      "initiate_flow": {
+        "reconfigure": "Skonfiguruj ponownie rozpoznawanie mowy",
+        "user": "Dodaj usługę rozpoznawania mowy"
+      },
+      "step": {
+        "init": {
+          "data": {
+            "custom_prompt_keywords": "Niestandardowy prompt/słowa kluczowe",
+            "keywords": "Słowa kluczowe",
+            "model": "Model",
+            "prompt": "Prompt"
+          },
+          "data_description": {
+            "custom_prompt_keywords": "Włącz opcjonalne podpowiedzi w postaci promptu i słów kluczowych. Wybrany backend LiteLLM musi obsługiwać każdy parametr; nieobsługiwane parametry mogą powodować błędy transkrypcji.",
+            "keywords": "Rozdzielone przecinkami słowa lub wyrażenia, które pomagają modelowi rozpoznawać nazwy i inne terminy. Obsługuje szablony Home Assistant. Modele OpenAI mogą obsługiwać je jednocześnie z promptem; inne modele mogą nie mieć takiej możliwości.",
+            "model": "Model używany do transkrypcji mowy",
+            "prompt": "Opcjonalny kontekst lub instrukcje dotyczące transkrypcji. Obsługuje szablony Home Assistant. Prompt musi być w języku nagrania i obsługiwany przez wybrany model."
+          },
+          "description": "Wybierz model do rozpoznawania mowy. Język transkrypcji wybiera się w konfiguracji Assist. LiteLLM nie udostępnia informacji o obsługiwanych językach poszczególnych modeli backendu."
+        }
+      }
+    }
+  }
+}
